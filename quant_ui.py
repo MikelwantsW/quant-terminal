@@ -17,6 +17,7 @@ st.markdown("""
     .stTabs [data-baseweb="tab"] { color: #94a3b8; font-weight: 600; padding: 10px 15px; }
     .stTabs [aria-selected="true"] { background-color: #2563eb !important; color: white !important; border-radius: 6px; }
     .slip-box { background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px dashed #38bdf8; margin-top: 10px; }
+    .league-header { background-color: #2563eb; color: white; padding: 8px 12px; border-radius: 6px; font-weight: bold; margin-top: 20px; margin-bottom: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -75,7 +76,7 @@ def get_fixtures(start_date, end_date):
 daily_matches = get_fixtures(today_str, today_str)
 weekly_matches = get_fixtures(today_str, week_out_str)
 
-tab1, tab2, tab3, tab4 = st.tabs(["🎟️ Auto-Acca Builder", "📝 Manual Weekly Slip", "🔥 Daily Picks", "📊 Accuracy Logic"])
+tab1, tab2, tab3, tab4 = st.tabs(["🎟️ Auto-Acca", "📝 Weekly Slip", "🔥 Daily Picks", "📊 Accuracy"])
 
 # --- TAB 1: AUTO ACCUMULATOR ---
 with tab1:
@@ -95,11 +96,10 @@ with tab1:
                 if h_st and a_st:
                     pick, p_type, thresh, conf = generate_ai_pick(h_st, a_st)
                     if p_type != "pass":
-                        valid_picks.append({"match": f"{m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}", "pick": pick, "conf": conf, "time": m.get('match_time')})
+                        valid_picks.append({"match": f"{m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}", "league": m.get('league_name'), "pick": pick, "conf": conf, "time": m.get('match_time')})
             
             # Sort by confidence
             valid_picks = sorted(valid_picks, key=lambda x: x['conf'], reverse=True)
-            
             pick_count = 2 if "2.0" in target_odds else 4 if "5.0" in target_odds else 7
             final_slip = valid_picks[:pick_count]
             
@@ -108,17 +108,16 @@ with tab1:
             
             st.markdown("<div class='slip-box'>", unsafe_allow_html=True)
             for p in final_slip:
-                st.markdown(f"🕒 **{p['time']}** | {p['match']} <br> ↳ **{p['pick']}** (Confidence: {p['conf']}%)", unsafe_allow_html=True)
+                st.markdown(f"🏆 **{p['league']}** | 🕒 {p['time']}<br> **{p['match']}** <br> ↳ **{p['pick']}** (Conf: {p['conf']}%)", unsafe_allow_html=True)
                 st.markdown("---")
             st.markdown("</div>", unsafe_allow_html=True)
 
-# --- TAB 2: MANUAL WEEKLY SLIP BUILDER ---
+# --- TAB 2: MANUAL WEEKLY SLIP BUILDER (GROUPED BY LEAGUE) ---
 with tab2:
     st.markdown("### 📝 Build Your Own Weekly Slip")
     st.caption("Select games for the next 7 days to track.")
     
     if isinstance(weekly_matches, list):
-        # Group by Date
         dates = sorted(list(set([m.get("match_date") for m in weekly_matches if m.get("match_status") != "Finished"])))
         
         selected_custom_picks = []
@@ -126,22 +125,41 @@ with tab2:
             st.markdown(f"#### 📅 {d}")
             day_games = [m for m in weekly_matches if m.get("match_date") == d and any(l in m.get("league_name", "") for l in top_leagues)]
             
+            # Group games by League
+            leagues_dict = {}
             for m in day_games:
-                match_label = f"{m.get('match_time')} | {m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')} ({m.get('league_name')})"
-                if st.checkbox(match_label, key=m.get("match_id")):
-                    selected_custom_picks.append(match_label)
+                l_name = m.get("league_name", "Other League")
+                leagues_dict.setdefault(l_name, []).append(m)
+            
+            # Display games under their League Headers
+            for l_name, games in leagues_dict.items():
+                st.markdown(f"<div class='league-header'>🏆 {l_name}</div>", unsafe_allow_html=True)
+                for m in games:
+                    match_label = f"🕒 {m.get('match_time')} | {m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}"
+                    if st.checkbox(match_label, key=m.get("match_id")):
+                        selected_custom_picks.append(f"{d} | {l_name} | {match_label}")
         
         if selected_custom_picks:
             st.success("🎟️ **Your Custom Slip:**")
             for pick in selected_custom_picks:
                 st.write(f"- {pick}")
 
-# --- TAB 3: DAILY PICKS ---
+# --- TAB 3: DAILY PICKS (GROUPED BY LEAGUE) ---
 with tab3:
     st.markdown("### 🔥 All System Picks Today")
     if isinstance(daily_matches, list):
-        for m in daily_matches:
-            if any(l in m.get("league_name", "") for l in top_leagues):
+        big_daily_games = [m for m in daily_matches if any(l in m.get("league_name", "") for l in top_leagues)]
+        
+        # Group by League
+        daily_leagues_dict = {}
+        for m in big_daily_games:
+            l_name = m.get("league_name", "Other League")
+            daily_leagues_dict.setdefault(l_name, []).append(m)
+            
+        # Display games under League Headers
+        for l_name, games in daily_leagues_dict.items():
+            st.markdown(f"<div class='league-header'>🏆 {l_name}</div>", unsafe_allow_html=True)
+            for m in games:
                 with st.expander(f"🕒 {m.get('match_time')} | {m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}"):
                     h_st, _ = fetch_stats(m.get("match_hometeam_id"))
                     a_st, _ = fetch_stats(m.get("match_awayteam_id"))
@@ -152,7 +170,7 @@ with tab3:
 # --- TAB 4: ACCURACY TRACKER ---
 with tab4:
     st.markdown("### 📊 Yesterday's Accuracy & Calibration")
-    st.info("Dynamic Self-Correction: If the win rate drops below 70%, the confidence thresholds for Tomorrow's games will become mathematically stricter.")
+    st.info("Dynamic Self-Correction: Tracks yesterday's performance to validate confidence models.")
     
     yesterday_matches = get_fixtures(yesterday_str, yesterday_str)
     if isinstance(yesterday_matches, list):
@@ -176,7 +194,7 @@ with tab4:
                     
                     if won: wins += 1
                     badge = "✅" if won else "❌"
-                    st.write(f"{badge} {m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')} | {pick}")
+                    st.write(f"{badge} **{m.get('league_name')}** | {m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')} | {pick}")
                     
         if total > 0:
             st.metric("System Win Rate", f"{(wins/total)*100:.1f}%")
