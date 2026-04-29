@@ -27,7 +27,14 @@ today_str = (datetime.utcnow() + timedelta(hours=1)).strftime('%Y-%m-%d')
 yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
 week_out_str = (datetime.utcnow() + timedelta(days=7)).strftime('%Y-%m-%d')
 past_str = (datetime.utcnow() - timedelta(days=30)).strftime('%Y-%m-%d')
-top_leagues = ["Premier League", "Serie A", "La Liga", "Bundesliga", "Ligue 1", "UEFA Champions League", "UEFA Europa League"]
+
+# --- EXPANDED INSTITUTIONAL WHITELIST ---
+top_leagues = [
+    "Premier League", "Serie A", "La Liga", "Bundesliga", "Ligue 1",
+    "UEFA Champions League", "UEFA Europa League", "UEFA Europa Conference League",
+    "Championship", "Eredivisie", "Primeira Liga", "Scottish Premiership", "Süper Lig", "First Division A",
+    "Major League Soccer", "Brasileirão Série A", "Liga Profesional Argentina", "Saudi Pro League"
+]
 
 def safe_num(v):
     if v is None: return 0.0
@@ -41,7 +48,6 @@ def fetch_stats(team_id):
     url = f"https://apiv3.apifootball.com/?action=get_events&team_id={team_id}&from={past_str}&to={today_str}&APIkey={API_KEY}"
     try:
         res = requests.get(url).json()
-        # RE-ADDED: All the deep metrics you track
         s = {"goals":0, "corners":0, "cards":0, "shots":0, "sot":0, "goalkicks":0, "cnt":0}
         if isinstance(res, list):
             recent = [m for m in res if m.get("match_status") == "Finished"][-5:]
