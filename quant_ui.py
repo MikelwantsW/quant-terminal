@@ -92,7 +92,15 @@ tab1, tab2, tab3, tab4 = st.tabs(["🎟️ Auto-Acca", "📝 Weekly Slip", "🔥
 # --- TAB 1: AUTO ACCUMULATOR ---
 with tab1:
     st.markdown("### 🎟️ Algorithmic Odds Generator")
-    target_odds = st.radio("Select Target Structure:", ["2.0 Odds (Safe Double)", "5.0 Odds (Standard)", "10.0+ Odds (Moonshot)"])
+    
+    odds_options = [
+        "2.0 Odds (Safe Double)", "5.0 Odds (Standard)", "10.0 Odds (Moonshot)", 
+        "15.0 Odds", "20.0 Odds", "30.0 Odds", "50.0 Odds", 
+        "100.0 Odds", "250.0 Odds", "500.0 Odds", "1000.0+ Odds (Lottery)"
+    ]
+    
+    target_odds = st.selectbox("Select Target Structure:", odds_options)
+    
     if st.button("Generate Institutional Slip"):
         if isinstance(daily_matches, list):
             big_games = [m for m in daily_matches if any(l in m.get("league_name", "") for l in top_leagues)]
@@ -104,9 +112,27 @@ with tab1:
                     pick, p_type, thresh, conf = generate_ai_pick(h_st, a_st)
                     if p_type != "pass":
                         valid_picks.append({"match": f"{m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}", "league": m.get('league_name'), "pick": pick, "conf": conf, "time": m.get('match_time')})
+            
             valid_picks = sorted(valid_picks, key=lambda x: x['conf'], reverse=True)
-            pick_count = 2 if "2.0" in target_odds else 4 if "5.0" in target_odds else 7
+            
+            # --- Dynamic Pick Scaling Logic ---
+            if "2.0" in target_odds: pick_count = 2
+            elif "5.0" in target_odds: pick_count = 4
+            elif "10.0" in target_odds: pick_count = 7
+            elif "15.0" in target_odds: pick_count = 8
+            elif "20.0" in target_odds: pick_count = 9
+            elif "30.0" in target_odds: pick_count = 10
+            elif "50.0" in target_odds: pick_count = 12
+            elif "100.0" in target_odds: pick_count = 14
+            elif "250.0" in target_odds: pick_count = 16
+            elif "500.0" in target_odds: pick_count = 18
+            else: pick_count = 20 # 1000+ odds
+            
             final_slip = valid_picks[:pick_count]
+            
+            if len(final_slip) < pick_count:
+                st.warning(f"Engine is strict: Not enough high-confidence games today to safely build a {target_odds} slip. Here are the top {len(final_slip)} plays instead:")
+            
             st.markdown("<div class='slip-box'>", unsafe_allow_html=True)
             for p in final_slip:
                 st.markdown(f"🏆 **{p['league']}** | 🕒 {p['time']}<br> **{p['match']}** <br> ↳ **{p['pick']}** (Conf: {p['conf']}%)", unsafe_allow_html=True)
@@ -157,7 +183,6 @@ with tab3:
                         pick, _, _, _ = generate_ai_pick(h_st, a_st)
                         st.markdown(f"<div style='text-align:center; padding:8px; background-color:#3b82f6; border-radius:6px; margin-bottom:10px;'><b>Engine Pick:</b> {pick}</div>", unsafe_allow_html=True)
                         
-                        # --- THE FULL INSTITUTIONAL GRID ---
                         st.caption("Average metrics over the last 5 completed games")
                         c1, c2, c3 = st.columns(3)
                         with c1:
