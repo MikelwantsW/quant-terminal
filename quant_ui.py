@@ -30,15 +30,13 @@ yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
 week_out_str = (datetime.utcnow() + timedelta(days=7)).strftime('%Y-%m-%d')
 past_str = (datetime.utcnow() - timedelta(days=30)).strftime('%Y-%m-%d')
 
-# --- EXPANDED INSTITUTIONAL WHITELIST (STRICT MATCH) ---
+# --- STRICT WHITELIST ---
 top_leagues = [
     "Premier League", "Serie A", "La Liga", "Bundesliga", "Ligue 1",
     "UEFA Champions League", "UEFA Europa League", "UEFA Europa Conference League",
     "Championship", "Eredivisie", "Primeira Liga", "Scottish Premiership", "Süper Lig", "First Division A",
     "Major League Soccer", "Brasileirão Série A", "Liga Profesional Argentina", "Saudi Pro League"
 ]
-
-# Adding country validation to prevent Jamaican/Ethiopian Premier League clashes
 top_countries = ["England", "Italy", "Spain", "Germany", "France", "eurocups", "Netherlands", "Portugal", "Scotland", "Turkey", "Belgium", "USA", "Brazil", "Argentina", "Saudi Arabia"]
 
 def safe_num(v):
@@ -53,12 +51,20 @@ def fetch_stats(team_id):
     url = f"https://apiv3.apifootball.com/?action=get_events&team_id={team_id}&from={past_str}&to={today_str}&APIkey={API_KEY}"
     try:
         res = requests.get(url).json()
-        s = {"goals":0, "corners":0, "cards":0, "shots":0, "sot":0, "goalkicks":0, "cnt":0}
+        # UPGRADED STATS MODEL: Now tracking goals conceded and flat draws
+        s = {"goals":0, "goals_conceded":0, "draws":0, "corners":0, "cards":0, "shots":0, "sot":0, "goalkicks":0, "cnt":0}
         if isinstance(res, list):
             recent = [m for m in res if m.get("match_status") == "Finished"][-5:]
             for m in recent:
                 is_h = m.get("match_hometeam_id") == team_id
-                s["goals"] += safe_num(m.get("match_hometeam_score" if is_h else "match_awayteam_score"))
+                scored = safe_num(m.get("match_hometeam_score" if is_h else "match_awayteam_score"))
+                conceded = safe_num(m.get("match_awayteam_score" if is_h else "match_hometeam_score"))
+                
+                s["goals"] += scored
+                s["goals_conceded"] += conceded
+                if scored == conceded:
+                    s["draws"] += 1
+                    
                 for row in m.get("statistics", []):
                     val = safe_num(row.get("home" if is_h else "away"))
                     stype = row.get("type")
@@ -68,17 +74,29 @@ def fetch_stats(team_id):
                     elif stype == "Shots On Goal": s["sot"] += val
                     elif stype == "Goal Kicks": s["goalkicks"] += val
                 s["cnt"] += 1
-        return {k: (v/s["cnt"] if s["cnt"] > 0 else 0) for k, v in s.items()}, s["cnt"]
+                
+        # Averages for everything EXCEPT draws (which remains a pure integer count out of 5)
+        return {k: (v/s["cnt"] if s["cnt"] > 0 and k != "draws" else v) for k, v in s.items()}, s["cnt"]
     except: return None, 0
 
 def generate_ai_pick(h_st, a_st):
     total_corners = h_st['corners'] + a_st['corners']
     total_goals = h_st['goals'] + a_st['goals']
     
-    if total_corners >= 11.5: return "🔥 Over 8.5 Corners", "corners", 8.5, 95
+    # NEW DRAW MATH VARIABLES
+    goal_diff = abs(h_st['goals'] - a_st['goals'])
+    total_conceded = h_st['goals_conceded'] + a_st['goals_conceded']
+    combined_draws = h_st['draws'] + a_st['draws']
+    
+    # 1. THE DRAW ALGORITHM (High value, strict parameters)
+    if combined_draws >= 3 and goal_diff <= 0.4 and total_conceded <= 2.5:
+        return "⚖️ Full-Time Draw (X)", "draw", 0, 85
+        
+    # 2. STANDARD MODELS
+    elif total_corners >= 11.5: return "🔥 Over 8.5 Corners", "corners", 8.5, 95
     elif total_goals >= 3.2: return "⚽ Over 2.5 Goals", "goals", 2.5, 90
     elif total_corners >= 10.0: return "📊 Over 8.5 Corners", "corners", 8.5, 75
-    elif total_goals <= 1.5: return "🛡️ Under 2.5 Goals", "under_goals", 2.5, 80
+    elif total_goals <= 1.5 and total_conceded <= 2.0: return "🛡️ Under 2.5 Goals", "under_goals", 2.5, 80
     else: return "⚠️ NO PLAY", "pass", 0, 0
 
 # --- APP LAYOUT ---
@@ -102,7 +120,6 @@ with tab1:
     
     if st.button("Generate Institutional Slip"):
         if isinstance(daily_matches, list):
-            # Strict match for auto-acca
             big_games = [m for m in daily_matches if m.get("league_name") in top_leagues and m.get("country_name") in top_countries]
             valid_picks = []
             for m in big_games:
@@ -137,7 +154,6 @@ with tab2:
         for d in dates[:4]: 
             day_games = [m for m in weekly_matches if m.get("match_date") == d]
             
-            # Apply Search OR Strict Whitelist
             if search_week:
                 day_games = [m for m in day_games if search_week.lower() in m.get('match_hometeam_name', '').lower() or search_week.lower() in m.get('match_awayteam_name', '').lower()]
             else:
@@ -159,13 +175,12 @@ with tab2:
             st.success("🎟️ **Your Custom Slip:**")
             for pick in selected_custom_picks: st.write(f"- {pick}")
 
-# --- TAB 3: DAILY PICKS (SEARCH INTEGRATED) ---
+# --- TAB 3: DAILY PICKS ---
 with tab3:
     st.markdown("### 🔥 All System Picks Today")
     search_daily = st.text_input("🔍 Search for a specific team playing today:", key="search_daily")
     
     if isinstance(daily_matches, list):
-        # Apply Search OR Strict Whitelist
         if search_daily:
             big_daily_games = [m for m in daily_matches if search_daily.lower() in m.get('match_hometeam_name', '').lower() or search_daily.lower() in m.get('match_awayteam_name', '').lower()]
         else:
@@ -174,9 +189,6 @@ with tab3:
         daily_leagues_dict = {}
         for m in big_daily_games:
             daily_leagues_dict.setdefault(m.get("league_name", "Other"), []).append(m)
-            
-        if not big_daily_games and search_daily:
-            st.warning("No matches found for that team today. Try searching in the Weekly Slip tab.")
             
         for l_name, games in daily_leagues_dict.items():
             st.markdown(f"<div class='league-header'>🏆 {l_name}</div>", unsafe_allow_html=True)
@@ -192,23 +204,26 @@ with tab3:
                         referee = m.get('match_referee', 'Not Announced Yet')
                         if not referee: referee = 'Not Announced Yet'
                         
-                        st.markdown(f"<div style='text-align:center; padding:8px; background-color:#3b82f6; border-radius:6px; margin-bottom:5px;'><b>Engine Pick:</b> {pick}</div>", unsafe_allow_html=True)
+                        # Use special styling if it's a draw pick
+                        bg_color = "#8b5cf6" if "Draw" in pick else "#3b82f6"
+                        
+                        st.markdown(f"<div style='text-align:center; padding:8px; background-color:{bg_color}; border-radius:6px; margin-bottom:5px;'><b>Engine Pick:</b> {pick}</div>", unsafe_allow_html=True)
                         st.markdown(f"<div class='referee-tag'>⚖️ Match Referee: {referee}</div>", unsafe_allow_html=True)
                         
                         st.caption("Average metrics over the last 5 completed games")
                         c1, c2, c3 = st.columns(3)
                         with c1:
                             st.metric(f"{h_name[:10]} SOT", f"{h_st['sot']:.1f}")
-                            st.metric("Total Shots", f"{h_st['shots']:.1f}")
-                            st.metric("Cards", f"{h_st['cards']:.1f}")
+                            st.metric("Avg Scored", f"{h_st['goals']:.1f}")
+                            st.metric("Avg Conceded", f"{h_st['goals_conceded']:.1f}")
                         with c2:
                             st.metric("Target Total SOT", f"{h_st['sot'] + a_st['sot']:.1f}")
-                            st.metric("Target Goal Kicks", f"{h_st['goalkicks'] + a_st['goalkicks']:.1f}")
-                            st.metric("Target Corners", f"{h_st['corners'] + a_st['corners']:.1f}")
+                            st.metric("Combined Conceded", f"{h_st['goals_conceded'] + a_st['goals_conceded']:.1f}")
+                            st.metric("Recent Draws", f"{int(h_st['draws'] + a_st['draws'])}/10")
                         with c3:
                             st.metric(f"{a_name[:10]} SOT", f"{a_st['sot']:.1f}")
-                            st.metric("Total Shots", f"{a_st['shots']:.1f}")
-                            st.metric("Cards", f"{a_st['cards']:.1f}")
+                            st.metric("Avg Scored", f"{a_st['goals']:.1f}")
+                            st.metric("Avg Conceded", f"{a_st['goals_conceded']:.1f}")
 
 # --- TAB 4: ACCURACY TRACKER ---
 with tab4:
@@ -224,13 +239,16 @@ with tab4:
                 pick, p_type, thresh, _ = generate_ai_pick(h_st, a_st)
                 if p_type != "pass":
                     total += 1
-                    act_goals = safe_num(m.get("match_hometeam_score")) + safe_num(m.get("match_awayteam_score"))
+                    act_h_score = safe_num(m.get("match_hometeam_score"))
+                    act_a_score = safe_num(m.get("match_awayteam_score"))
+                    act_goals = act_h_score + act_a_score
                     act_corn = sum([safe_num(s.get("home")) + safe_num(s.get("away")) for s in m.get("statistics", []) if s.get("type") == "Corners"])
                     
                     won = False
                     if p_type == "corners" and act_corn > thresh: won = True
                     if p_type == "goals" and act_goals > thresh: won = True
                     if p_type == "under_goals" and act_goals < thresh: won = True
+                    if p_type == "draw" and act_h_score == act_a_score: won = True
                     
                     if won: wins += 1
                     badge = "✅" if won else "❌"
