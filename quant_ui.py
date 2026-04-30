@@ -18,6 +18,8 @@ st.markdown("""
     .stTabs [aria-selected="true"] { background-color: #2563eb !important; color: white !important; border-radius: 6px; }
     .slip-box { background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px dashed #38bdf8; margin-top: 10px; }
     .league-header { background-color: #2563eb; color: white; padding: 8px 12px; border-radius: 6px; font-weight: bold; margin-top: 20px; margin-bottom: 10px; }
+    .referee-tag { color: #f87171; font-size: 14px; font-weight: bold; margin-bottom: 5px; text-align: center; }
+    .search-box { margin-bottom: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -28,13 +30,16 @@ yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
 week_out_str = (datetime.utcnow() + timedelta(days=7)).strftime('%Y-%m-%d')
 past_str = (datetime.utcnow() - timedelta(days=30)).strftime('%Y-%m-%d')
 
-# --- EXPANDED INSTITUTIONAL WHITELIST ---
+# --- EXPANDED INSTITUTIONAL WHITELIST (STRICT MATCH) ---
 top_leagues = [
     "Premier League", "Serie A", "La Liga", "Bundesliga", "Ligue 1",
     "UEFA Champions League", "UEFA Europa League", "UEFA Europa Conference League",
     "Championship", "Eredivisie", "Primeira Liga", "Scottish Premiership", "Süper Lig", "First Division A",
     "Major League Soccer", "Brasileirão Série A", "Liga Profesional Argentina", "Saudi Pro League"
 ]
+
+# Adding country validation to prevent Jamaican/Ethiopian Premier League clashes
+top_countries = ["England", "Italy", "Spain", "Germany", "France", "eurocups", "Netherlands", "Portugal", "Scotland", "Turkey", "Belgium", "USA", "Brazil", "Argentina", "Saudi Arabia"]
 
 def safe_num(v):
     if v is None: return 0.0
@@ -92,18 +97,13 @@ tab1, tab2, tab3, tab4 = st.tabs(["🎟️ Auto-Acca", "📝 Weekly Slip", "🔥
 # --- TAB 1: AUTO ACCUMULATOR ---
 with tab1:
     st.markdown("### 🎟️ Algorithmic Odds Generator")
-    
-    odds_options = [
-        "2.0 Odds (Safe Double)", "5.0 Odds (Standard)", "10.0 Odds (Moonshot)", 
-        "15.0 Odds", "20.0 Odds", "30.0 Odds", "50.0 Odds", 
-        "100.0 Odds", "250.0 Odds", "500.0 Odds", "1000.0+ Odds (Lottery)"
-    ]
-    
+    odds_options = ["2.0 Odds (Safe Double)", "5.0 Odds (Standard)", "10.0 Odds", "15.0 Odds", "20.0 Odds", "30.0 Odds", "50.0 Odds", "100.0 Odds", "250.0 Odds", "500.0 Odds", "1000.0+ Odds"]
     target_odds = st.selectbox("Select Target Structure:", odds_options)
     
     if st.button("Generate Institutional Slip"):
         if isinstance(daily_matches, list):
-            big_games = [m for m in daily_matches if any(l in m.get("league_name", "") for l in top_leagues)]
+            # Strict match for auto-acca
+            big_games = [m for m in daily_matches if m.get("league_name") in top_leagues and m.get("country_name") in top_countries]
             valid_picks = []
             for m in big_games:
                 h_st, _ = fetch_stats(m.get("match_hometeam_id"))
@@ -114,24 +114,11 @@ with tab1:
                         valid_picks.append({"match": f"{m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}", "league": m.get('league_name'), "pick": pick, "conf": conf, "time": m.get('match_time')})
             
             valid_picks = sorted(valid_picks, key=lambda x: x['conf'], reverse=True)
-            
-            # --- Dynamic Pick Scaling Logic ---
-            if "2.0" in target_odds: pick_count = 2
-            elif "5.0" in target_odds: pick_count = 4
-            elif "10.0" in target_odds: pick_count = 7
-            elif "15.0" in target_odds: pick_count = 8
-            elif "20.0" in target_odds: pick_count = 9
-            elif "30.0" in target_odds: pick_count = 10
-            elif "50.0" in target_odds: pick_count = 12
-            elif "100.0" in target_odds: pick_count = 14
-            elif "250.0" in target_odds: pick_count = 16
-            elif "500.0" in target_odds: pick_count = 18
-            else: pick_count = 20 # 1000+ odds
-            
+            pick_count = 2 if "2.0" in target_odds else 4 if "5.0" in target_odds else 7 if "10.0" in target_odds else 12
             final_slip = valid_picks[:pick_count]
             
             if len(final_slip) < pick_count:
-                st.warning(f"Engine is strict: Not enough high-confidence games today to safely build a {target_odds} slip. Here are the top {len(final_slip)} plays instead:")
+                st.warning(f"Engine is strict: Not enough high-confidence games today. Top {len(final_slip)} plays instead:")
             
             st.markdown("<div class='slip-box'>", unsafe_allow_html=True)
             for p in final_slip:
@@ -142,33 +129,54 @@ with tab1:
 # --- TAB 2: MANUAL WEEKLY SLIP BUILDER ---
 with tab2:
     st.markdown("### 📝 Build Your Own Weekly Slip")
+    search_week = st.text_input("🔍 Search for a specific team (e.g., Arsenal, SC Braga):", key="search_week")
+    
     if isinstance(weekly_matches, list):
         dates = sorted(list(set([m.get("match_date") for m in weekly_matches if m.get("match_status") != "Finished"])))
         selected_custom_picks = []
         for d in dates[:4]: 
-            st.markdown(f"#### 📅 {d}")
-            day_games = [m for m in weekly_matches if m.get("match_date") == d and any(l in m.get("league_name", "") for l in top_leagues)]
-            leagues_dict = {}
-            for m in day_games:
-                leagues_dict.setdefault(m.get("league_name", "Other"), []).append(m)
-            for l_name, games in leagues_dict.items():
-                st.markdown(f"<div class='league-header'>🏆 {l_name}</div>", unsafe_allow_html=True)
-                for m in games:
-                    match_label = f"🕒 {m.get('match_time')} | {m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}"
-                    if st.checkbox(match_label, key=m.get("match_id")):
-                        selected_custom_picks.append(f"{d} | {l_name} | {match_label}")
+            day_games = [m for m in weekly_matches if m.get("match_date") == d]
+            
+            # Apply Search OR Strict Whitelist
+            if search_week:
+                day_games = [m for m in day_games if search_week.lower() in m.get('match_hometeam_name', '').lower() or search_week.lower() in m.get('match_awayteam_name', '').lower()]
+            else:
+                day_games = [m for m in day_games if m.get("league_name") in top_leagues and m.get("country_name") in top_countries]
+            
+            if day_games:
+                st.markdown(f"#### 📅 {d}")
+                leagues_dict = {}
+                for m in day_games:
+                    leagues_dict.setdefault(m.get("league_name", "Other"), []).append(m)
+                for l_name, games in leagues_dict.items():
+                    st.markdown(f"<div class='league-header'>🏆 {l_name}</div>", unsafe_allow_html=True)
+                    for m in games:
+                        match_label = f"🕒 {m.get('match_time')} | {m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}"
+                        if st.checkbox(match_label, key=m.get("match_id")):
+                            selected_custom_picks.append(f"{d} | {l_name} | {match_label}")
+                            
         if selected_custom_picks:
             st.success("🎟️ **Your Custom Slip:**")
             for pick in selected_custom_picks: st.write(f"- {pick}")
 
-# --- TAB 3: DAILY PICKS (DEEP STATS RESTORED) ---
+# --- TAB 3: DAILY PICKS (SEARCH INTEGRATED) ---
 with tab3:
     st.markdown("### 🔥 All System Picks Today")
+    search_daily = st.text_input("🔍 Search for a specific team playing today:", key="search_daily")
+    
     if isinstance(daily_matches, list):
-        big_daily_games = [m for m in daily_matches if any(l in m.get("league_name", "") for l in top_leagues)]
+        # Apply Search OR Strict Whitelist
+        if search_daily:
+            big_daily_games = [m for m in daily_matches if search_daily.lower() in m.get('match_hometeam_name', '').lower() or search_daily.lower() in m.get('match_awayteam_name', '').lower()]
+        else:
+            big_daily_games = [m for m in daily_matches if m.get("league_name") in top_leagues and m.get("country_name") in top_countries]
+            
         daily_leagues_dict = {}
         for m in big_daily_games:
             daily_leagues_dict.setdefault(m.get("league_name", "Other"), []).append(m)
+            
+        if not big_daily_games and search_daily:
+            st.warning("No matches found for that team today. Try searching in the Weekly Slip tab.")
             
         for l_name, games in daily_leagues_dict.items():
             st.markdown(f"<div class='league-header'>🏆 {l_name}</div>", unsafe_allow_html=True)
@@ -181,7 +189,11 @@ with tab3:
                     
                     if h_st and a_st:
                         pick, _, _, _ = generate_ai_pick(h_st, a_st)
-                        st.markdown(f"<div style='text-align:center; padding:8px; background-color:#3b82f6; border-radius:6px; margin-bottom:10px;'><b>Engine Pick:</b> {pick}</div>", unsafe_allow_html=True)
+                        referee = m.get('match_referee', 'Not Announced Yet')
+                        if not referee: referee = 'Not Announced Yet'
+                        
+                        st.markdown(f"<div style='text-align:center; padding:8px; background-color:#3b82f6; border-radius:6px; margin-bottom:5px;'><b>Engine Pick:</b> {pick}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='referee-tag'>⚖️ Match Referee: {referee}</div>", unsafe_allow_html=True)
                         
                         st.caption("Average metrics over the last 5 completed games")
                         c1, c2, c3 = st.columns(3)
@@ -203,7 +215,7 @@ with tab4:
     st.markdown("### 📊 Yesterday's Accuracy & Calibration")
     yesterday_matches = get_fixtures(yesterday_str, yesterday_str)
     if isinstance(yesterday_matches, list):
-        past_big = [m for m in yesterday_matches if any(l in m.get("league_name", "") for l in top_leagues) and m.get("match_status") == "Finished"]
+        past_big = [m for m in yesterday_matches if m.get("league_name") in top_leagues and m.get("country_name") in top_countries and m.get("match_status") == "Finished"]
         wins, total = 0, 0
         for m in past_big:
             h_st, _ = fetch_stats(m.get("match_hometeam_id"))
