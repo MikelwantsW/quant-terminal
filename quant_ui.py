@@ -18,7 +18,8 @@ st.markdown("""
     .stTabs [aria-selected="true"] { background-color: #2563eb !important; color: white !important; border-radius: 6px; }
     .slip-box { background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px dashed #38bdf8; margin-top: 10px; }
     .league-header { background-color: #2563eb; color: white; padding: 8px 12px; border-radius: 6px; font-weight: bold; margin-top: 20px; margin-bottom: 10px; }
-    .referee-tag { color: #f87171; font-size: 14px; font-weight: bold; margin-bottom: 5px; text-align: center; }
+    .referee-tag { color: #f87171; font-size: 14px; font-weight: bold; margin-bottom: 5px; text-align: center; display: block; }
+    .referee-tag:hover { color: #ffffff !important; background-color: #f87171; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -27,7 +28,6 @@ API_KEY = "4ca129dfac12e50067e9a115f4d50328619188357f590208bcbacba23789307a"
 today_str = (datetime.utcnow() + timedelta(hours=1)).strftime('%Y-%m-%d')
 yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
 week_out_str = (datetime.utcnow() + timedelta(days=7)).strftime('%Y-%m-%d')
-# Increased lookback to 90 days to ensure we get enough strict Home/Away games
 past_str = (datetime.utcnow() - timedelta(days=90)).strftime('%Y-%m-%d')
 
 # --- EXPANDED INSTITUTIONAL WHITELIST (STRICT MATCH) ---
@@ -48,32 +48,20 @@ def safe_num(v):
 
 @st.cache_data(ttl=600)
 def fetch_stats(team_id, venue):
-    """
-    venue: 'home' or 'away'
-    Fetches strict venue performance and factors in Defensive stats (Against)
-    """
     url = f"https://apiv3.apifootball.com/?action=get_events&team_id={team_id}&from={past_str}&to={today_str}&APIkey={API_KEY}"
     try:
         res = requests.get(url).json()
-        # gf = Goals For, ga = Goals Against, cf = Corners For, ca = Corners Against
-        s = {"gf":0, "ga":0, "cf":0, "ca":0, "sotf":0, "sota":0, "cnt":0}
+        s = {"gf":0, "ga":0, "cf":0, "ca":0, "sotf":0, "sota":0, "cards":0, "cnt":0}
         if isinstance(res, list):
             finished = [m for m in res if m.get("match_status") == "Finished"]
-            
-            # Strict venue filter
-            if venue == "home":
-                relevant_games = [m for m in finished if m.get("match_hometeam_id") == team_id][-5:]
-            else:
-                relevant_games = [m for m in finished if m.get("match_awayteam_id") == team_id][-5:]
+            if venue == "home": relevant_games = [m for m in finished if m.get("match_hometeam_id") == team_id][-5:]
+            else: relevant_games = [m for m in finished if m.get("match_awayteam_id") == team_id][-5:]
                 
             for m in relevant_games:
                 is_h = m.get("match_hometeam_id") == team_id
-                
-                # Goals tracking
                 s["gf"] += safe_num(m.get("match_hometeam_score" if is_h else "match_awayteam_score"))
                 s["ga"] += safe_num(m.get("match_awayteam_score" if is_h else "match_hometeam_score"))
                 
-                # Stats tracking
                 for row in m.get("statistics", []):
                     team_val = safe_num(row.get("home" if is_h else "away"))
                     opp_val = safe_num(row.get("away" if is_h else "home"))
@@ -85,6 +73,8 @@ def fetch_stats(team_id, venue):
                     elif stype == "Shots On Goal": 
                         s["sotf"] += team_val
                         s["sota"] += opp_val
+                    elif stype == "Yellow Cards":
+                        s["cards"] += team_val
                 
                 s["cnt"] += 1
         
@@ -93,16 +83,13 @@ def fetch_stats(team_id, venue):
     except: return None, 0
 
 def generate_ai_pick(h_st, a_st):
-    # TRUE MATCHUP PROJECTIONS: (Team Avg For + Opponent Avg Conceded) / 2
     proj_h_goals = (h_st['gf'] + a_st['ga']) / 2
     proj_a_goals = (a_st['gf'] + h_st['ga']) / 2
     proj_total_goals = proj_h_goals + proj_a_goals
-    
     proj_h_corners = (h_st['cf'] + a_st['ca']) / 2
     proj_a_corners = (a_st['cf'] + h_st['ca']) / 2
     proj_total_corners = proj_h_corners + proj_a_corners
 
-    # Thresholds adjusted for true projections
     if proj_total_corners >= 10.5: return "🔥 Over 8.5 Corners", "corners", 8.5, 95
     elif proj_total_goals >= 3.0: return "⚽ Over 2.5 Goals", "goals", 2.5, 90
     elif proj_total_corners >= 9.5: return "📊 Over 8.5 Corners", "corners", 8.5, 75
@@ -122,7 +109,7 @@ weekly_matches = get_fixtures(today_str, week_out_str)
 
 tab1, tab2, tab3, tab4 = st.tabs(["🎟️ Auto-Acca", "📝 Weekly Slip", "🔥 Daily Picks", "📊 Accuracy"])
 
-# --- TAB 1: AUTO ACCUMULATOR ---
+# --- TAB 1 & 2 OMITTED FOR BREVITY IN EXPLANATION (CODE IS FULL IN BLOCK) ---
 with tab1:
     st.markdown("### 🎟️ Algorithmic Odds Generator")
     odds_options = ["2.0 Odds (Safe Double)", "5.0 Odds (Standard)", "10.0 Odds", "15.0 Odds", "20.0 Odds", "30.0 Odds", "50.0 Odds", "100.0 Odds", "250.0 Odds", "500.0 Odds", "1000.0+ Odds"]
@@ -133,7 +120,6 @@ with tab1:
             big_games = [m for m in daily_matches if m.get("league_name") in top_leagues and m.get("country_name") in top_countries]
             valid_picks = []
             for m in big_games:
-                # Passing strict venue roles
                 h_st, _ = fetch_stats(m.get("match_hometeam_id"), "home")
                 a_st, _ = fetch_stats(m.get("match_awayteam_id"), "away")
                 if h_st and a_st:
@@ -154,7 +140,6 @@ with tab1:
                 st.markdown("---")
             st.markdown("</div>", unsafe_allow_html=True)
 
-# --- TAB 2: MANUAL WEEKLY SLIP BUILDER ---
 with tab2:
     st.markdown("### 📝 Build Your Own Weekly Slip")
     search_week = st.text_input("🔍 Search for a specific team (e.g., Arsenal, SC Braga):", key="search_week")
@@ -185,7 +170,7 @@ with tab2:
             st.success("🎟️ **Your Custom Slip:**")
             for pick in selected_custom_picks: st.write(f"- {pick}")
 
-# --- TAB 3: DAILY PICKS (VENUE SPECIFIC DATA) ---
+# --- TAB 3: DAILY PICKS (REFEREE LINK & CARD MATH ADDED) ---
 with tab3:
     st.markdown("### 🔥 All System Picks Today")
     search_daily = st.text_input("🔍 Search for a specific team playing today:", key="search_daily")
@@ -209,22 +194,27 @@ with tab3:
                 h_name = m.get('match_hometeam_name')
                 a_name = m.get('match_awayteam_name')
                 with st.expander(f"🕒 {m.get('match_time')} | {h_name} vs {a_name}"):
-                    # Passing strict venue roles
                     h_st, _ = fetch_stats(m.get("match_hometeam_id"), "home")
                     a_st, _ = fetch_stats(m.get("match_awayteam_id"), "away")
                     
                     if h_st and a_st:
                         pick, _, _, _ = generate_ai_pick(h_st, a_st)
-                        referee = m.get('match_referee', 'Not Announced Yet')
-                        if not referee: referee = 'Not Announced Yet'
                         
-                        st.markdown(f"<div style='text-align:center; padding:8px; background-color:#3b82f6; border-radius:6px; margin-bottom:5px;'><b>Engine Pick:</b> {pick}</div>", unsafe_allow_html=True)
-                        st.markdown(f"<div class='referee-tag'>⚖️ Match Referee: {referee}</div>", unsafe_allow_html=True)
+                        # Make Referee Actionable
+                        referee = m.get('match_referee')
+                        if referee:
+                            ref_link = f"https://www.transfermarkt.com/schnellsuche/ergebnis/schnellsuche?query={referee.replace(' ', '+')}"
+                            ref_html = f"<a href='{ref_link}' target='_blank' class='referee-tag' style='border: 1px solid #f87171; padding: 5px; border-radius: 5px; text-decoration: none;'>⚖️ Referee: {referee} (Click for Stats)</a>"
+                        else:
+                            ref_html = "<div class='referee-tag'>⚖️ Referee: Not Announced Yet</div>"
                         
-                        # True Projections Math
+                        st.markdown(f"<div style='text-align:center; padding:8px; background-color:#3b82f6; border-radius:6px; margin-bottom:10px;'><b>Engine Pick:</b> {pick}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='text-align:center; margin-bottom:15px;'>{ref_html}</div>", unsafe_allow_html=True)
+                        
                         proj_h_goals = (h_st['gf'] + a_st['ga']) / 2
                         proj_a_goals = (a_st['gf'] + h_st['ga']) / 2
                         proj_corners = ((h_st['cf'] + a_st['ca']) / 2) + ((a_st['cf'] + h_st['ca']) / 2)
+                        proj_cards = h_st['cards'] + a_st['cards']
                         
                         st.caption("True Matchup Projections (Home form vs Away form)")
                         c1, c2, c3 = st.columns(3)
@@ -235,7 +225,7 @@ with tab3:
                         with c2:
                             st.metric("Total xG", f"{proj_h_goals + proj_a_goals:.2f}")
                             st.metric("Proj. Corners", f"{proj_corners:.2f}")
-                            st.metric("Match Tempo", "High" if proj_corners > 9.5 else "Standard")
+                            st.metric("Proj. Cards (Teams)", f"{proj_cards:.1f}")
                         with c3:
                             st.metric(f"{a_name[:10]} xG", f"{proj_a_goals:.2f}")
                             st.metric("Corners For", f"{a_st['cf']:.1f}")
