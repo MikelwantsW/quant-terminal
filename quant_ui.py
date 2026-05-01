@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Institutional Radar", page_icon="🏦", layout="wide")
 
-# --- ULTIMATE CSS OVERRIDE ---
+# --- ULTIMATE CSS OVERRIDE (FIXES WHITE-OUT & THEME) ---
 st.markdown("""
     <style>
     .stApp { background-color: #0f172a !important; color: #f8fafc !important; font-family: 'Inter', sans-serif; }
@@ -16,7 +16,7 @@ st.markdown("""
     [data-testid="stExpander"] details summary { background-color: #1e293b !important; color: #f8fafc !important; }
     [data-testid="stExpander"] details summary:hover, [data-testid="stExpander"] details summary:focus { background-color: #334155 !important; color: #f8fafc !important; outline: none !important; }
     
-    /* Tab Styling */
+    /* TAB STYLING */
     .stTabs [data-baseweb="tab-list"] { background-color: #1e293b; border-radius: 8px; padding: 5px; gap: 10px; }
     .stTabs [data-baseweb="tab"] { color: #94a3b8; font-weight: 600; padding: 10px 15px; }
     .stTabs [aria-selected="true"] { background-color: #16a34a !important; color: white !important; border-radius: 6px; }
@@ -41,10 +41,11 @@ st.markdown("""
 st.sidebar.title("⚡ Terminal Settings")
 live_refresh = st.sidebar.toggle("Enable Live Auto-Refresh (60s)", value=False)
 if live_refresh:
+    st.sidebar.success("🟢 LIVE MODE ACTIVE")
     time.sleep(60)
     st.rerun()
 
-# --- CORE SETTINGS ---
+# --- DATA SETTINGS ---
 API_KEY = "4ca129dfac12e50067e9a115f4d50328619188357f590208bcbacba23789307a"
 today_str = (datetime.utcnow() + timedelta(hours=1)).strftime('%Y-%m-%d')
 yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
@@ -64,7 +65,7 @@ def fetch_stats(team_id, venue):
     url = f"https://apiv3.apifootball.com/?action=get_events&team_id={team_id}&from={past_str}&to={today_str}&APIkey={API_KEY}"
     try:
         res = requests.get(url).json()
-        s = {"gf":0, "ga":0, "cf":0, "ca":0, "sotf":0, "sota":0, "cards":0, "cnt":0}
+        s = {"gf":0, "ga":0, "cf":0, "ca":0, "sotf":0, "sota":0, "shotsf":0, "shotsa":0, "cards":0, "cnt":0}
         if isinstance(res, list):
             finished = [m for m in res if m.get("match_status") == "Finished"]
             relevant = [m for m in finished if m.get("match_hometeam_id" if venue=="home" else "match_awayteam_id") == team_id][-5:]
@@ -78,21 +79,27 @@ def fetch_stats(team_id, venue):
                     if stype == "Corners": s["cf"] += t_val; s["ca"] += o_val
                     elif stype == "Yellow Cards": s["cards"] += t_val
                     elif stype == "Shots On Goal": s["sotf"] += t_val; s["sota"] += o_val
+                    elif stype == "Shots Total": s["shotsf"] += t_val; s["shotsa"] += o_val
                 s["cnt"] += 1
         return {k: (v/s["cnt"] if s["cnt"] > 0 else 0) for k, v in s.items() if k != "cnt"}, s["cnt"]
     except: return None, 0
 
 def generate_ai_pick(h_st, a_st):
-    proj_g = ((h_st['gf'] + a_st['ga']) / 2) + ((a_st['gf'] + h_st['ga']) / 2)
-    proj_c = ((h_st['cf'] + a_st['ca']) / 2) + ((a_st['cf'] + h_st['ca']) / 2)
-    proj_cd = h_st['cards'] + a_st['cards']
-    picks = []
-    if proj_g >= 3.2: picks.append(("⚽ Over 2.5 Goals", "goals", 2.5, 90))
-    if proj_c >= 11.0: picks.append(("🔥 Over 8.5 Corners", "corners", 8.5, 95))
-    elif proj_c >= 9.5: picks.append(("📊 Over 8.5 Corners", "corners", 8.5, 75))
-    if proj_cd >= 5.8: picks.append(("🟨 Over 4.5 Cards", "cards", 4.5, 80))
-    picks.sort(key=lambda x: x[3], reverse=True)
-    return picks[0] if picks else ("⚠️ NO PLAY", "pass", 0, 0)
+    proj_goals = ((h_st['gf'] + a_st['ga']) / 2) + ((a_st['gf'] + h_st['ga']) / 2)
+    proj_corners = ((h_st['cf'] + a_st['ca']) / 2) + ((a_st['cf'] + h_st['ca']) / 2)
+    proj_sot = ((h_st['sotf'] + a_st['sota']) / 2) + ((a_st['sotf'] + h_st['sota']) / 2)
+    proj_shots = ((h_st['shotsf'] + a_st['shotsa']) / 2) + ((a_st['shotsf'] + h_st['shotsa']) / 2)
+    proj_cards = h_st['cards'] + a_st['cards']
+    plays = []
+    if proj_goals >= 3.2: plays.append(("⚽ Over 2.5 Goals", "goals", 2.5, 90))
+    elif proj_goals <= 1.8: plays.append(("🛡️ Under 2.5 Goals", "under_goals", 2.5, 85))
+    if proj_corners >= 11.0: plays.append(("🔥 Over 8.5 Corners", "corners", 8.5, 95))
+    elif proj_corners >= 10.0: plays.append(("📊 Over 8.5 Corners", "corners", 8.5, 75))
+    if proj_sot >= 10.5: plays.append(("🎯 Over 8.5 SOT", "sot", 8.5, 88))
+    if proj_shots >= 27.0: plays.append(("🚀 Over 24.5 Shots", "shots", 24.5, 82))
+    if proj_cards >= 5.8: plays.append(("🟨 Over 4.5 Cards", "cards", 4.5, 80))
+    plays.sort(key=lambda x: x[3], reverse=True)
+    return plays[0] if plays else ("⚠️ NO PLAY", "pass", 0, 0)
 
 # --- GET DATA ---
 daily_matches = requests.get(f"https://apiv3.apifootball.com/?action=get_events&from={today_str}&to={today_str}&APIkey={API_KEY}").json()
@@ -101,10 +108,11 @@ weekly_matches = requests.get(f"https://apiv3.apifootball.com/?action=get_events
 st.markdown("<h2 style='text-align: center;'>🏦 Institutional Quant Radar</h2>", unsafe_allow_html=True)
 tab1, tab2, tab3, tab4 = st.tabs(["🎟️ Auto-Acca", "📝 Weekly Slip", "🔥 Daily Picks", "📊 Accuracy"])
 
-# --- TAB 1: AUTO ACCA ---
+# --- TAB 1: AUTO ACCA (RESTORED ODDS) ---
 with tab1:
     st.markdown("### 🎟️ Algorithmic Odds Generator")
-    target_odds = st.selectbox("Select Target Structure:", ["2.0 Odds", "5.0 Odds", "10.0 Odds", "20.0 Odds", "50.0 Odds"])
+    odds_options = ["2.0 Odds", "5.0 Odds", "10.0 Odds", "15.0 Odds", "20.0 Odds", "30.0 Odds", "50.0 Odds", "100.0 Odds", "250.0 Odds", "500.0 Odds", "1000.0+ Odds"]
+    target_odds = st.selectbox("Select Target Structure:", odds_options)
     if st.button("Generate Institutional Slip"):
         if isinstance(daily_matches, list):
             big_games = [m for m in daily_matches if m.get("league_name") in top_leagues and m.get("country_name") in top_countries]
@@ -116,24 +124,26 @@ with tab1:
                     pick, _, _, conf = generate_ai_pick(h_st, a_st)
                     if conf > 0: valid_picks.append({"match": f"{m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}", "league": m.get('league_name'), "pick": pick, "conf": conf, "time": m.get('match_time')})
             valid_picks.sort(key=lambda x: x['conf'], reverse=True)
+            pick_count = 15 if "1000" in target_odds else 10 if "100" in target_odds else 5
             st.markdown("<div class='slip-box'>", unsafe_allow_html=True)
-            for p in valid_picks[:5]:
+            for p in valid_picks[:pick_count]:
                 st.markdown(f"🏆 **{p['league']}** | 🕒 {p['time']}<br> **{p['match']}** <br> ↳ <span style='color:#16a34a; font-weight:bold;'>{p['pick']}</span>", unsafe_allow_html=True)
                 st.markdown("---")
             st.markdown("</div>", unsafe_allow_html=True)
 
-# --- TAB 2: WEEKLY SLIP ---
+# --- TAB 2: WEEKLY SLIP (RESTORED SEARCH) ---
 with tab2:
     st.markdown("### 📝 Build Your Own Weekly Slip")
-    search = st.text_input("🔍 Search for a team:")
+    search_query = st.text_input("🔍 Search for a specific team (e.g., Arsenal, SC Braga):")
     if isinstance(weekly_matches, list):
-        filtered_weekly = [m for m in weekly_matches if search.lower() in m.get('match_hometeam_name','').lower() or search.lower() in m.get('match_awayteam_name','').lower()] if search else [m for m in weekly_matches if m.get("league_name") in top_leagues]
-        for d in sorted(list(set([m.get("match_date") for m in filtered_weekly]))):
+        filtered_weekly = [m for m in weekly_matches if search_query.lower() in m.get('match_hometeam_name','').lower() or search_query.lower() in m.get('match_awayteam_name','').lower()] if search_query else [m for m in weekly_matches if m.get("league_name") in top_leagues]
+        dates = sorted(list(set([m.get("match_date") for m in filtered_weekly])))
+        for d in dates:
             st.markdown(f"#### 📅 {d}")
             for m in [g for g in filtered_weekly if g.get("match_date") == d]:
-                st.checkbox(f"🕒 {m.get('match_time')} | {m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}", key=m.get("match_id"))
+                st.checkbox(f"🕒 {m.get('match_time')} | {m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}", key=f"{m.get('match_id')}_week")
 
-# --- TAB 3: DAILY PICKS (FIXED WHITE-OUT) ---
+# --- TAB 3: DAILY PICKS (FIXED WHITE-OUT & LIVE) ---
 with tab3:
     st.markdown("### 🔥 All System Picks Today")
     if isinstance(daily_matches, list):
@@ -153,14 +163,17 @@ with tab3:
                         ref_html = f"<a href='https://www.google.com/search?q={ref.replace(' ','+')}+referee+stats' target='_blank' class='referee-tag'>⚖️ {ref}</a>" if ref else "⚖️ TBD"
                         c1, c2 = st.columns([3, 1.2])
                         with c1: st.markdown(f"<div class='big-pick-box'><div class='big-pick-text'>{pick}</div><div style='margin-top:10px;'>{ref_html}</div></div>", unsafe_allow_html=True)
-                        with c2: st.markdown(f"<div class='edge-stats'><div class='edge-stats-title'>🔥 Math Edge</div><div class='stat-line'><span>xG</span> <b>{((h_st['gf']+a_st['ga'])/2)+((a_st['gf']+h_st['ga'])/2):.2f}</b></div><div class='stat-line'><span>Corners</span> <b>{((h_st['cf']+a_st['ca'])/2)+((a_st['cf']+h_st['ca'])/2):.1f}</b></div><div class='stat-line'><span>Cards</span> <b>{h_st['cards']+a_st['cards']:.1f}</b></div></div>", unsafe_allow_html=True)
+                        with c2:
+                            pg = ((h_st['gf']+a_st['ga'])/2)+((a_st['gf']+h_st['ga'])/2)
+                            pc = ((h_st['cf']+a_st['ca'])/2)+((a_st['cf']+h_st['ca'])/2)
+                            st.markdown(f"<div class='edge-stats'><div style='color:#f97316; font-size:11px; font-weight:900; margin-bottom:10px;'>MATH EDGE</div><div class='stat-line'><span>xG</span> <b>{pg:.2f}</b></div><div class='stat-line'><span>Corners</span> <b>{pc:.1f}</b></div><div class='stat-line'><span>Cards</span> <b>{h_st['cards']+a_st['cards']:.1f}</b></div><div class='stat-line'><span>SOT</span> <b>{h_st['sotf']+a_st['sotf']:.1f}</b></div></div>", unsafe_allow_html=True)
 
-# --- TAB 4: ACCURACY ---
+# --- TAB 4: ACCURACY (RESTORED) ---
 with tab4:
     st.markdown("### 📊 Yesterday's Accuracy")
-    yesterday_matches = requests.get(f"https://apiv3.apifootball.com/?action=get_events&from={yesterday_str}&to={yesterday_str}&APIkey={API_KEY}").json()
-    if isinstance(yesterday_matches, list):
-        finished = [m for m in yesterday_matches if m.get("league_name") in top_leagues and m.get("match_status") == "Finished"]
+    yesterday_res = requests.get(f"https://apiv3.apifootball.com/?action=get_events&from={yesterday_str}&to={yesterday_str}&APIkey={API_KEY}").json()
+    if isinstance(yesterday_res, list):
+        finished = [m for m in yesterday_res if m.get("league_name") in top_leagues and m.get("match_status") == "Finished"]
         wins, total = 0, 0
         for m in finished:
             h_st, _ = fetch_stats(m.get("match_hometeam_id"), "home")
