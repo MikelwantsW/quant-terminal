@@ -7,26 +7,42 @@ from datetime import datetime, timedelta
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Institutional Radar", page_icon="🏦", layout="wide")
 
-# --- PROFESSIONAL CSS ---
+# --- PREMIUM SPORTSBOOK CSS (BETANO STYLE) ---
 st.markdown("""
     <style>
-    .stApp { background-color: #0f172a !important; color: #f8fafc !important; font-family: 'Inter', sans-serif; }
-    h1, h2, h3, p, span, label { color: #f8fafc !important; }
-    [data-testid="stExpander"] details summary { background-color: #1e293b !important; color: #f8fafc !important; border: 1px solid #334155 !important; border-radius: 8px !important; }
-    [data-testid="stExpander"] details summary:hover { background-color: #334155 !important; }
-    [data-testid="stExpander"] details summary p { color: #f8fafc !important; font-weight: bold !important; }
-    .stTabs [data-baseweb="tab-list"] { background-color: #1e293b; border-radius: 8px; padding: 5px; gap: 10px; }
-    .stTabs [data-baseweb="tab"] { color: #94a3b8; font-weight: 600; padding: 10px 15px; }
-    .stTabs [aria-selected="true"] { background-color: #2563eb !important; color: white !important; border-radius: 6px; }
-    .slip-box { background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px dashed #38bdf8; margin-top: 10px; }
-    .league-header { background-color: #1d4ed8; color: white; padding: 8px 12px; border-radius: 6px; font-weight: bold; margin-top: 20px; margin-bottom: 10px; }
-    .big-pick-box { background-color: #2563eb; padding: 30px; border-radius: 8px; text-align: center; border: 1px solid #3b82f6; height: 100%; display: flex; flex-direction: column; justify-content: center;}
-    .big-pick-text { font-size: 28px !important; font-weight: 900 !important; color: white !important; margin-bottom: 8px; }
-    .referee-tag { color: #fca5a5; font-size: 14px; font-weight: bold; text-decoration: none; }
-    .referee-tag:hover { color: white !important; }
-    .edge-stats { background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px solid #334155; height: 100%; }
-    .stat-line { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 8px; border-bottom: 1px solid #334155; padding-bottom: 4px; }
+    /* Main Background & Font */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap');
+    .stApp { background-color: #0a0e17 !important; color: #ffffff !important; font-family: 'Inter', sans-serif; }
+    h1, h2, h3, p, span, label { color: #ffffff !important; }
+    
+    /* Sleek Tab Navigation */
+    .stTabs [data-baseweb="tab-list"] { background-color: transparent !important; border-bottom: 2px solid #1f2937; padding-bottom: 0; gap: 24px; }
+    .stTabs [data-baseweb="tab"] { color: #64748b; font-weight: 700; text-transform: uppercase; font-size: 14px; letter-spacing: 0.5px; padding: 12px 0; border-radius: 0; border-bottom: 3px solid transparent; background-color: transparent !important; }
+    .stTabs [aria-selected="true"] { color: #ff5a00 !important; border-bottom: 3px solid #ff5a00 !important; }
+    
+    /* Betting Market Expanders */
+    [data-testid="stExpander"] { background-color: #141b26 !important; border: 1px solid #1f2937 !important; border-radius: 10px !important; margin-bottom: 12px; overflow: hidden; }
+    [data-testid="stExpander"] details summary { background-color: #1a2230 !important; padding: 16px !important; color: #ffffff !important; border-bottom: 1px solid #1f2937; }
+    [data-testid="stExpander"] details summary:hover { background-color: #1f2937 !important; }
+    [data-testid="stExpander"] details summary p { font-weight: 700 !important; font-size: 15px !important; }
+    
+    /* League Headers - Distinct & Sharp */
+    .league-header { background-color: #1a2230; color: #ffffff; padding: 12px 16px; border-radius: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; border-left: 4px solid #ff5a00; margin-top: 24px; margin-bottom: 16px; font-size: 14px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    
+    /* The "Betano" Orange Hero Box */
+    .big-pick-box { background: linear-gradient(135deg, #ff5a00 0%, #ff8200 100%); padding: 30px; border-radius: 12px; text-align: center; box-shadow: 0 8px 25px rgba(255, 90, 0, 0.25); border: none; height: 100%; display: flex; flex-direction: column; justify-content: center; }
+    .big-pick-text { font-size: 32px !important; font-weight: 900 !important; color: #ffffff !important; text-transform: uppercase; letter-spacing: -0.5px; margin-bottom: 10px; text-shadow: 1px 2px 4px rgba(0,0,0,0.15); }
+    .referee-tag { color: #fff7ed; font-size: 13px; font-weight: 600; text-decoration: none; opacity: 0.9; }
+    .referee-tag:hover { opacity: 1; text-decoration: underline; }
+    
+    /* Stats Box - High Contrast Grid */
+    .edge-stats { background-color: #141b26; padding: 20px; border-radius: 12px; border: 1px solid #1f2937; height: 100%; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2); }
+    .stat-line { display: flex; justify-content: space-between; align-items: center; font-size: 14px; color: #94a3b8; margin-bottom: 12px; border-bottom: 1px solid #1f2937; padding-bottom: 8px; }
     .stat-line:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+    .stat-line b { font-size: 16px; color: #ffffff; font-weight: 700; }
+    
+    /* Acca Slip Box */
+    .slip-box { background-color: #141b26; padding: 20px; border-radius: 12px; border: 1px solid #ff5a00; border-left: 4px solid #ff5a00; margin-top: 15px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -113,7 +129,6 @@ def generate_ai_pick(h_st, a_st):
     if proj_shots >= 27.0: plays.append(("🚀 Over 24.5 Shots", "shots", 24.5, 82))
     if proj_cards >= 5.8: plays.append(("🟨 Over 4.5 Cards", "cards", 4.5, 80))
     
-    # New Tackle Market Projection
     if proj_tackles >= 34.0: plays.append(("🪓 Over 30.5 Tackles", "tackles", 30.5, 83))
 
     if not plays: return "⚠️ NO PLAY", "pass", 0, 0
@@ -126,7 +141,7 @@ def get_fixtures(start_date, end_date):
     return requests.get(url).json()
 
 # --- APP LAYOUT ---
-st.markdown("<h2 style='text-align: center;'>🏦 Institutional Quant Radar</h2>", unsafe_allow_html=True)
+st.markdown("<h2 style='text-align: center; color: #ffffff; font-weight: 900; margin-bottom: 30px;'>🏦 Institutional Quant Radar</h2>", unsafe_allow_html=True)
 
 daily_matches = get_fixtures(today_str, today_str)
 weekly_matches = get_fixtures(today_str, week_out_str)
@@ -159,8 +174,8 @@ with tab1:
             
             st.markdown("<div class='slip-box'>", unsafe_allow_html=True)
             for p in final_slip:
-                st.markdown(f"🏆 **{p['league']}** | 🕒 {p['time']}<br> **{p['match']}** <br> ↳ **{p['pick']}** (Conf: {p['conf']}%)", unsafe_allow_html=True)
-                st.markdown("---")
+                st.markdown(f"<span style='color:#ff5a00; font-weight:bold;'>🏆 {p['league']}</span> | 🕒 {p['time']}<br> <b style='font-size:16px;'>{p['match']}</b> <br> ↳ <b style='color:#ffffff;'>{p['pick']}</b> (Conf: {p['conf']}%)", unsafe_allow_html=True)
+                st.markdown("<hr style='border-color: #1f2937;'>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
 with tab2:
@@ -178,7 +193,7 @@ with tab2:
                 day_games = [m for m in day_games if m.get("league_name") in top_leagues and m.get("country_name") in top_countries]
             
             if day_games:
-                st.markdown(f"#### 📅 {d}")
+                st.markdown(f"<h4 style='color:#ff5a00; margin-top:20px;'>📅 {d}</h4>", unsafe_allow_html=True)
                 leagues_dict = {}
                 for m in day_games:
                     leagues_dict.setdefault(m.get("league_name", "Other"), []).append(m)
@@ -226,7 +241,7 @@ with tab3:
                         referee = m.get('match_referee')
                         if referee:
                             ref_link = f"https://www.google.com/search?q=football+referee+{referee.replace(' ', '+')}+stats"
-                            ref_html = f"<a href='{ref_link}' target='_blank' class='referee-tag'>⚖️ {referee}</a>"
+                            ref_html = f"<a href='{ref_link}' target='_blank' class='referee-tag'>⚖️ REFEREE: {referee}</a>"
                         else:
                             ref_html = "<div class='referee-tag'>⚖️ TBD</div>"
                         
@@ -236,7 +251,7 @@ with tab3:
                         proj_cards = h_st['cards'] + a_st['cards']
                         proj_tackles = h_st['tackles'] + a_st['tackles']
                         
-                        c1, c2 = st.columns([3, 1.4])
+                        c1, c2 = st.columns([2.5, 1.5])
                         with c1:
                             st.markdown(f"""
                                 <div class='big-pick-box'>
@@ -247,8 +262,8 @@ with tab3:
                         with c2:
                             st.markdown(f"""
                                 <div class='edge-stats'>
-                                    <div style='color:#94a3b8; font-size:11px; margin-bottom:8px; text-transform:uppercase; font-weight:bold;'>Proj. Data</div>
-                                    <div class='stat-line'><span>xG</span> <b>{proj_goals:.2f}</b></div>
+                                    <div style='color:#ff5a00; font-size:11px; margin-bottom:12px; text-transform:uppercase; font-weight:800; letter-spacing:1px;'>Data Engine</div>
+                                    <div class='stat-line'><span>Total xG</span> <b>{proj_goals:.2f}</b></div>
                                     <div class='stat-line'><span>Corners</span> <b>{proj_corners:.1f}</b></div>
                                     <div class='stat-line'><span>SOT</span> <b>{proj_sot:.1f}</b></div>
                                     <div class='stat-line'><span>Cards</span> <b>{proj_cards:.1f}</b></div>
@@ -256,7 +271,6 @@ with tab3:
                                 </div>
                             """, unsafe_allow_html=True)
 
-# --- TAB 4: PERSISTENT LEDGER TRACKER ---
 with tab4:
     st.markdown("### 📊 Historical Accuracy Ledger")
     
