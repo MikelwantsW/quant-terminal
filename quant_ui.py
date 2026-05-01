@@ -23,21 +23,13 @@ st.markdown("""
     .league-header { background-color: #1d4ed8; color: white; padding: 8px 12px; border-radius: 6px; font-weight: bold; margin-top: 20px; margin-bottom: 10px; }
     
     /* Minimalist UI Classes */
-    .big-pick-box { background-color: #2563eb; padding: 30px; border-radius: 8px; text-align: center; border: 1px solid #3b82f6; height: 100%; display: flex; flex-direction: column; justify-content: center; transition: all 0.3s ease;}
+    .big-pick-box { background-color: #2563eb; padding: 30px; border-radius: 8px; text-align: center; border: 1px solid #3b82f6; height: 100%; display: flex; flex-direction: column; justify-content: center;}
     .big-pick-text { font-size: 28px !important; font-weight: 900 !important; color: white !important; margin-bottom: 8px; }
     .referee-tag { color: #fca5a5; font-size: 14px; font-weight: bold; text-decoration: none; }
     .referee-tag:hover { color: white !important; }
     .edge-stats { background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px solid #334155; height: 100%; }
     .stat-line { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 8px; border-bottom: 1px solid #334155; padding-bottom: 4px; }
     .stat-line:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
-    
-    /* Advantage Box */
-    .advantage-box { background-color: #0f172a; border-left: 4px solid #10b981; padding: 10px 15px; margin-top: 15px; border-radius: 4px; font-size: 13px; color: #cbd5e1; }
-    .advantage-title { font-weight: bold; color: #10b981; margin-bottom: 5px; font-size: 14px; }
-    
-    /* Override Box */
-    .override-box { background-color: #1e293b; border: 1px dashed #64748b; padding: 10px; margin-bottom: 15px; border-radius: 6px; }
-    .override-title { font-size: 12px; color: #94a3b8; text-transform: uppercase; font-weight: bold; margin-bottom: 8px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -56,6 +48,27 @@ top_leagues = [
     "Major League Soccer", "Brasileirão Série A", "Liga Profesional Argentina", "Saudi Pro League"
 ]
 top_countries = ["England", "Italy", "Spain", "Germany", "France", "eurocups", "Netherlands", "Portugal", "Scotland", "Turkey", "Belgium", "USA", "Brazil", "Argentina", "Saudi Arabia"]
+
+# --- THE SILENT RIVALRY MATRIX ---
+# You can add as many local derbies here as you want.
+DERBY_DATABASE = [
+    ["Arsenal", "Tottenham"], ["Real Madrid", "Barcelona"], ["Galatasaray", "Fenerbahce"],
+    ["Boca", "River"], ["Celtic", "Rangers"], ["Man United", "Man City"],
+    ["Manchester United", "Manchester City"], ["Inter", "Milan"], ["Lazio", "Roma"],
+    ["Liverpool", "Everton"], ["Aston Villa", "Birmingham"], ["Newcastle", "Sunderland"],
+    ["Betis", "Sevilla"], ["Atletico", "Real Madrid"], ["Juventus", "Torino"],
+    ["Bayern", "Dortmund"], ["PSG", "Marseille"], ["Fenerbahce", "Besiktas"],
+    ["Galatasaray", "Besiktas"], ["Sporting", "Benfica"], ["Porto", "Benfica"]
+]
+
+def is_derby(h_name, a_name):
+    h_lower = h_name.lower()
+    a_lower = a_name.lower()
+    for pair in DERBY_DATABASE:
+        if (pair[0].lower() in h_lower and pair[1].lower() in a_lower) or \
+           (pair[1].lower() in h_lower and pair[0].lower() in a_lower):
+            return True
+    return False
 
 def safe_num(v):
     if v is None: return 0.0
@@ -103,33 +116,34 @@ def fetch_stats(team_id, venue):
         return {k: (v/s["cnt"]) for k, v in s.items() if k != "cnt"}, s["cnt"]
     except: return None, 0
 
-def analyze_matchup(h_name, a_name, h_st, a_st):
-    advantages = []
-    h_atk_vs_a_def = h_st['gf'] - a_st['ga']
-    a_atk_vs_h_def = a_st['gf'] - h_st['ga']
-    
-    if h_atk_vs_a_def > 0.8: advantages.append(f"⚔️ **{h_name} Attack:** Massive advantage. They average {h_st['gf']:.1f} goals, and {a_name} leaks {a_st['ga']:.1f} goals away.")
-    elif a_atk_vs_h_def > 0.8: advantages.append(f"⚔️ **{a_name} Attack:** Strong away advantage. They score {a_st['gf']:.1f} against a {h_name} defense conceding {h_st['ga']:.1f}.")
-    if h_st['ga'] < 0.8 and a_st['ga'] < 0.8: advantages.append(f"🛡️ **Defensive Battle:** Both teams have elite defenses, conceding under 0.8 goals. Expect a low-scoring grind.")
-    if h_st['cf'] > 6.0 and a_st['ca'] > 5.5: advantages.append(f"🚩 **Corner Vulnerability:** {h_name} forces {h_st['cf']:.1f} corners/game, and {a_name} gives up {a_st['ca']:.1f} corners on the road. Prime Over setup.")
-    if h_st['sotf'] > 5.5 and a_st['sota'] > 5.0: advantages.append(f"🎯 **Target Practice:** {a_name}'s goalkeeper will be busy. They allow {a_st['sota']:.1f} SOT, and {h_name} shoots accurately ({h_st['sotf']:.1f} SOT).")
+def generate_ai_pick(h_st, a_st, h_name="", a_name=""):
+    proj_goals = ((h_st['gf'] + a_st['ga']) / 2) + ((a_st['gf'] + h_st['ga']) / 2)
+    proj_corners = ((h_st['cf'] + a_st['ca']) / 2) + ((a_st['cf'] + h_st['ca']) / 2)
+    proj_sot = ((h_st['sotf'] + a_st['sota']) / 2) + ((a_st['sotf'] + h_st['sota']) / 2)
+    proj_shots = ((h_st['shotsf'] + a_st['shotsa']) / 2) + ((a_st['shotsf'] + h_st['shotsa']) / 2)
+    proj_cards = h_st['cards'] + a_st['cards']
 
-    if not advantages: advantages.append("⚖️ **Balanced Matchup:** Neither team holds a severe statistical mismatch over the other.")
-    return advantages
+    # AUTOMATED RIVALRY SHIELD: Bumps expected cards massively if a derby is detected
+    if is_derby(h_name, a_name):
+        proj_cards += 2.5 
 
-# Refactored to accept raw dynamic variables
-def generate_ai_pick(proj_goals, proj_corners, proj_sot, proj_shots, proj_cards):
     plays = []
     
+    # Evaluate Goals
     if proj_goals >= 3.2: plays.append(("⚽ Over 2.5 Goals", "goals", 2.5, 90))
     elif proj_goals <= 1.8: plays.append(("🛡️ Under 2.5 Goals", "under_goals", 2.5, 85))
     
+    # Evaluate Corners
     if proj_corners >= 11.0: plays.append(("🔥 Over 8.5 Corners", "corners", 8.5, 95))
     elif proj_corners >= 10.0: plays.append(("📊 Over 8.5 Corners", "corners", 8.5, 75))
     
+    # Evaluate SOT
     if proj_sot >= 10.5: plays.append(("🎯 Over 8.5 SOT", "sot", 8.5, 88))
+    
+    # Evaluate Total Shots
     if proj_shots >= 27.0: plays.append(("🚀 Over 24.5 Shots", "shots", 24.5, 82))
     
+    # Evaluate Cards (Will trigger much more often if Derby Shield is active)
     if proj_cards >= 5.8: plays.append(("🟨 Over 4.5 Cards", "cards", 4.5, 80))
 
     if not plays:
@@ -151,7 +165,6 @@ weekly_matches = get_fixtures(today_str, week_out_str)
 
 tab1, tab2, tab3, tab4 = st.tabs(["🎟️ Auto-Acca", "📝 Weekly Slip", "🔥 Daily Picks", "📊 Accuracy"])
 
-# Tabs 1 and 2 remain unchanged...
 with tab1:
     st.markdown("### 🎟️ Algorithmic Odds Generator")
     odds_options = ["2.0 Odds (Safe Double)", "5.0 Odds (Standard)", "10.0 Odds", "15.0 Odds", "20.0 Odds", "30.0 Odds", "50.0 Odds", "100.0 Odds", "250.0 Odds", "500.0 Odds", "1000.0+ Odds"]
@@ -164,16 +177,12 @@ with tab1:
             for m in big_games:
                 h_st, _ = fetch_stats(m.get("match_hometeam_id"), "home")
                 a_st, _ = fetch_stats(m.get("match_awayteam_id"), "away")
+                h_name = m.get('match_hometeam_name', "")
+                a_name = m.get('match_awayteam_name', "")
                 if h_st and a_st:
-                    pg = ((h_st['gf'] + a_st['ga']) / 2) + ((a_st['gf'] + h_st['ga']) / 2)
-                    pc = ((h_st['cf'] + a_st['ca']) / 2) + ((a_st['cf'] + h_st['ca']) / 2)
-                    psot = ((h_st['sotf'] + a_st['sota']) / 2) + ((a_st['sotf'] + h_st['sota']) / 2)
-                    pshots = ((h_st['shotsf'] + a_st['shotsa']) / 2) + ((a_st['shotsf'] + h_st['shotsa']) / 2)
-                    pcards = h_st['cards'] + a_st['cards']
-                    
-                    pick, p_type, thresh, conf = generate_ai_pick(pg, pc, psot, pshots, pcards)
+                    pick, p_type, thresh, conf = generate_ai_pick(h_st, a_st, h_name, a_name)
                     if p_type != "pass":
-                        valid_picks.append({"match": f"{m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}", "league": m.get('league_name'), "pick": pick, "conf": conf, "time": m.get('match_time')})
+                        valid_picks.append({"match": f"{h_name} vs {a_name}", "league": m.get('league_name'), "pick": pick, "conf": conf, "time": m.get('match_time')})
             
             valid_picks = sorted(valid_picks, key=lambda x: x['conf'], reverse=True)
             pick_count = 2 if "2.0" in target_odds else 4 if "5.0" in target_odds else 7 if "10.0" in target_odds else 12
@@ -218,7 +227,6 @@ with tab2:
             st.success("🎟️ **Your Custom Slip:**")
             for pick in selected_custom_picks: st.write(f"- {pick}")
 
-# --- TAB 3: CONTEXT & WEATHER OVERRIDES ---
 with tab3:
     st.markdown("### 🔥 All System Picks Today")
     search_daily = st.text_input("🔍 Search for a specific team playing today:", key="search_daily")
@@ -241,42 +249,13 @@ with tab3:
             for m in games:
                 h_name = m.get('match_hometeam_name')
                 a_name = m.get('match_awayteam_name')
-                match_uid = m.get('match_id')
                 
                 with st.expander(f"🕒 {m.get('match_time')} | {h_name} vs {a_name}"):
                     h_st, _ = fetch_stats(m.get("match_hometeam_id"), "home")
                     a_st, _ = fetch_stats(m.get("match_awayteam_id"), "away")
                     
                     if h_st and a_st:
-                        # 1. Base Math Calculations
-                        proj_goals = ((h_st['gf'] + a_st['ga']) / 2) + ((a_st['gf'] + h_st['ga']) / 2)
-                        proj_corners = ((h_st['cf'] + a_st['ca']) / 2) + ((a_st['cf'] + h_st['ca']) / 2)
-                        proj_sot = ((h_st['sotf'] + a_st['sota']) / 2) + ((a_st['sotf'] + h_st['sota']) / 2)
-                        proj_shots = ((h_st['shotsf'] + a_st['shotsa']) / 2) + ((a_st['shotsf'] + h_st['shotsa']) / 2)
-                        proj_cards = h_st['cards'] + a_st['cards']
-
-                        # 2. Trader Context Overrides UI
-                        st.markdown("<div class='override-box'><div class='override-title'>⚙️ Contextual Trader Overrides</div>", unsafe_allow_html=True)
-                        col1, col2, col3 = st.columns(3)
-                        is_rain = col1.checkbox("🌧️ Heavy Rain/Pitch", key=f"rain_{match_uid}")
-                        is_derby = col2.checkbox("🔥 Local Derby", key=f"derby_{match_uid}")
-                        is_relegation = col3.checkbox("📉 Relegation Fight", key=f"rel_{match_uid}")
-                        st.markdown("</div>", unsafe_allow_html=True)
-
-                        # 3. Apply Multipliers to Math based on Trader Input
-                        if is_rain:
-                            proj_goals *= 0.85  # Harder to score in rain
-                            proj_cards *= 1.15  # More sliding tackles
-                        if is_derby:
-                            proj_cards *= 1.30  # High emotion, bad tackles
-                            proj_corners *= 1.10 # High intensity pushing
-                        if is_relegation:
-                            proj_goals *= 0.90  # Tight, scared defense
-                            proj_cards *= 1.20  # Desperate tackles
-
-                        # 4. Generate Pick AFTER Overrides
-                        pick, _, _, _ = generate_ai_pick(proj_goals, proj_corners, proj_sot, proj_shots, proj_cards)
-                        advantages = analyze_matchup(h_name, a_name, h_st, a_st)
+                        pick, _, _, _ = generate_ai_pick(h_st, a_st, h_name, a_name)
                         
                         referee = m.get('match_referee')
                         if referee:
@@ -285,33 +264,36 @@ with tab3:
                         else:
                             ref_html = "<div class='referee-tag'>⚖️ TBD</div>"
                         
-                        # 5. Render Dynamic Visuals
+                        proj_goals = ((h_st['gf'] + a_st['ga']) / 2) + ((a_st['gf'] + h_st['ga']) / 2)
+                        proj_corners = ((h_st['cf'] + a_st['ca']) / 2) + ((a_st['cf'] + h_st['ca']) / 2)
+                        proj_sot = ((h_st['sotf'] + a_st['sota']) / 2) + ((a_st['sotf'] + h_st['sota']) / 2)
+                        proj_cards = h_st['cards'] + a_st['cards']
+                        
+                        if is_derby(h_name, a_name):
+                            proj_cards += 2.5
+                            derby_tag = "<div style='color:#ef4444; font-size:12px; font-weight:bold; margin-top:5px;'>🔥 DERBY SHIELD ACTIVE (+2.5 Cards)</div>"
+                        else:
+                            derby_tag = ""
+                        
                         c1, c2 = st.columns([3, 1.2])
                         with c1:
-                            # Box turns purple if an override is active to alert the trader
-                            box_style = "background-color: #6d28d9; border-color: #8b5cf6;" if (is_rain or is_derby or is_relegation) else ""
                             st.markdown(f"""
-                                <div class='big-pick-box' style='{box_style}'>
+                                <div class='big-pick-box'>
                                     <div class='big-pick-text'>{pick}</div>
                                     {ref_html}
+                                    {derby_tag}
                                 </div>
                             """, unsafe_allow_html=True)
                         with c2:
                             st.markdown(f"""
                                 <div class='edge-stats'>
-                                    <div style='color:#94a3b8; font-size:11px; margin-bottom:8px; text-transform:uppercase; font-weight:bold;'>Dynamic Math</div>
+                                    <div style='color:#94a3b8; font-size:11px; margin-bottom:8px; text-transform:uppercase; font-weight:bold;'>Proj. Data</div>
                                     <div class='stat-line'><span>xG</span> <b>{proj_goals:.2f}</b></div>
                                     <div class='stat-line'><span>Corners</span> <b>{proj_corners:.1f}</b></div>
                                     <div class='stat-line'><span>SOT</span> <b>{proj_sot:.1f}</b></div>
                                     <div class='stat-line'><span>Cards</span> <b>{proj_cards:.1f}</b></div>
                                 </div>
                             """, unsafe_allow_html=True)
-
-                        st.markdown("<div class='advantage-box'>", unsafe_allow_html=True)
-                        st.markdown("<div class='advantage-title'>🔍 Key Matchup Edges</div>", unsafe_allow_html=True)
-                        for adv in advantages:
-                            st.markdown(f"<div style='margin-bottom:4px;'>{adv}</div>", unsafe_allow_html=True)
-                        st.markdown("</div>", unsafe_allow_html=True)
 
 with tab4:
     st.markdown("### 📊 Yesterday's Accuracy & Calibration")
@@ -322,16 +304,10 @@ with tab4:
         for m in past_big:
             h_st, _ = fetch_stats(m.get("match_hometeam_id"), "home")
             a_st, _ = fetch_stats(m.get("match_awayteam_id"), "away")
+            h_name = m.get('match_hometeam_name', "")
+            a_name = m.get('match_awayteam_name', "")
             if h_st and a_st:
-                # Use raw math for historical accuracy check (we don't know the weather yesterday)
-                pg = ((h_st['gf'] + a_st['ga']) / 2) + ((a_st['gf'] + h_st['ga']) / 2)
-                pc = ((h_st['cf'] + a_st['ca']) / 2) + ((a_st['cf'] + h_st['ca']) / 2)
-                psot = ((h_st['sotf'] + a_st['sota']) / 2) + ((a_st['sotf'] + h_st['sota']) / 2)
-                pshots = ((h_st['shotsf'] + a_st['shotsa']) / 2) + ((a_st['shotsf'] + h_st['shotsa']) / 2)
-                pcards = h_st['cards'] + a_st['cards']
-                
-                pick, p_type, thresh, _ = generate_ai_pick(pg, pc, psot, pshots, pcards)
-                
+                pick, p_type, thresh, _ = generate_ai_pick(h_st, a_st, h_name, a_name)
                 if p_type != "pass":
                     total += 1
                     act_goals = safe_num(m.get("match_hometeam_score")) + safe_num(m.get("match_awayteam_score"))
@@ -344,7 +320,7 @@ with tab4:
                     
                     if won: wins += 1
                     badge = "✅" if won else "❌"
-                    st.write(f"{badge} **{m.get('league_name')}** | {m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')} | {pick}")
+                    st.write(f"{badge} **{m.get('league_name')}** | {h_name} vs {a_name} | {pick}")
                     
         if total > 0:
             st.metric("System Win Rate", f"{(wins/total)*100:.1f}%")
