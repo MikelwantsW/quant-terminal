@@ -58,7 +58,7 @@ def fetch_stats(team_id, venue):
     url = f"https://apiv3.apifootball.com/?action=get_events&team_id={team_id}&from={past_str}&to={today_str}&APIkey={API_KEY}"
     try:
         res = requests.get(url).json()
-        s = {"gf":0, "ga":0, "cf":0, "ca":0, "sotf":0, "sota":0, "shotsf":0, "shotsa":0, "cards":0, "cnt":0}
+        s = {"gf":0, "ga":0, "cf":0, "ca":0, "sotf":0, "sota":0, "shotsf":0, "shotsa":0, "cards":0, "tackles":0, "cnt":0}
         if isinstance(res, list):
             finished = [m for m in res if m.get("match_status") == "Finished"]
             if venue == "home": relevant_games = [m for m in finished if m.get("match_hometeam_id") == team_id][-5:]
@@ -85,6 +85,8 @@ def fetch_stats(team_id, venue):
                     elif stype == "Shots Total":
                         s["shotsf"] += team_val
                         s["shotsa"] += opp_val
+                    elif stype == "Tackles":
+                        s["tackles"] += team_val
                 
                 s["cnt"] += 1
         
@@ -98,6 +100,7 @@ def generate_ai_pick(h_st, a_st):
     proj_sot = ((h_st['sotf'] + a_st['sota']) / 2) + ((a_st['sotf'] + h_st['sota']) / 2)
     proj_shots = ((h_st['shotsf'] + a_st['shotsa']) / 2) + ((a_st['shotsf'] + h_st['shotsa']) / 2)
     proj_cards = h_st['cards'] + a_st['cards']
+    proj_tackles = h_st['tackles'] + a_st['tackles']
 
     plays = []
     if proj_goals >= 3.2: plays.append(("⚽ Over 2.5 Goals", "goals", 2.5, 90))
@@ -109,6 +112,9 @@ def generate_ai_pick(h_st, a_st):
     if proj_sot >= 10.5: plays.append(("🎯 Over 8.5 SOT", "sot", 8.5, 88))
     if proj_shots >= 27.0: plays.append(("🚀 Over 24.5 Shots", "shots", 24.5, 82))
     if proj_cards >= 5.8: plays.append(("🟨 Over 4.5 Cards", "cards", 4.5, 80))
+    
+    # New Tackle Market Projection
+    if proj_tackles >= 34.0: plays.append(("🪓 Over 30.5 Tackles", "tackles", 30.5, 83))
 
     if not plays: return "⚠️ NO PLAY", "pass", 0, 0
     plays.sort(key=lambda x: x[3], reverse=True)
@@ -228,8 +234,9 @@ with tab3:
                         proj_corners = ((h_st['cf'] + a_st['ca']) / 2) + ((a_st['cf'] + h_st['ca']) / 2)
                         proj_sot = ((h_st['sotf'] + a_st['sota']) / 2) + ((a_st['sotf'] + h_st['sota']) / 2)
                         proj_cards = h_st['cards'] + a_st['cards']
+                        proj_tackles = h_st['tackles'] + a_st['tackles']
                         
-                        c1, c2 = st.columns([3, 1.2])
+                        c1, c2 = st.columns([3, 1.4])
                         with c1:
                             st.markdown(f"""
                                 <div class='big-pick-box'>
@@ -245,6 +252,7 @@ with tab3:
                                     <div class='stat-line'><span>Corners</span> <b>{proj_corners:.1f}</b></div>
                                     <div class='stat-line'><span>SOT</span> <b>{proj_sot:.1f}</b></div>
                                     <div class='stat-line'><span>Cards</span> <b>{proj_cards:.1f}</b></div>
+                                    <div class='stat-line'><span>Tackles</span> <b>{proj_tackles:.1f}</b></div>
                                 </div>
                             """, unsafe_allow_html=True)
 
@@ -252,7 +260,6 @@ with tab3:
 with tab4:
     st.markdown("### 📊 Historical Accuracy Ledger")
     
-    # Load Ledger
     if os.path.exists(LEDGER_FILE):
         with open(LEDGER_FILE, "r") as f:
             try: ledger = json.load(f)
@@ -260,7 +267,6 @@ with tab4:
     else:
         ledger = {}
 
-    # Automatically Grade Yesterday if missing
     if yesterday_str not in ledger:
         with st.spinner(f"Evaluating {yesterday_str} results..."):
             yesterday_matches = get_fixtures(yesterday_str, yesterday_str)
@@ -281,6 +287,7 @@ with tab4:
                             act_sot = sum([safe_num(s.get("home")) + safe_num(s.get("away")) for s in m.get("statistics", []) if s.get("type") == "Shots On Goal"])
                             act_shots = sum([safe_num(s.get("home")) + safe_num(s.get("away")) for s in m.get("statistics", []) if s.get("type") == "Shots Total"])
                             act_cards = sum([safe_num(s.get("home")) + safe_num(s.get("away")) for s in m.get("statistics", []) if s.get("type") == "Yellow Cards"])
+                            act_tackles = sum([safe_num(s.get("home")) + safe_num(s.get("away")) for s in m.get("statistics", []) if s.get("type") == "Tackles"])
                             
                             won = False
                             if p_type == "corners" and act_corn > thresh: won = True
@@ -289,12 +296,12 @@ with tab4:
                             elif p_type == "sot" and act_sot > thresh: won = True
                             elif p_type == "shots" and act_shots > thresh: won = True
                             elif p_type == "cards" and act_cards > thresh: won = True
+                            elif p_type == "tackles" and act_tackles > thresh: won = True
                             
                             if won: wins += 1
                             badge = "✅" if won else "❌"
                             day_details.append(f"{badge} **{m.get('league_name')}** | {m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')} | {pick}")
                 
-                # Save into Ledger File permanently
                 if total > 0:
                     ledger[yesterday_str] = {
                         "win_rate": round((wins/total)*100, 1),
@@ -305,7 +312,6 @@ with tab4:
                     with open(LEDGER_FILE, "w") as f:
                         json.dump(ledger, f)
 
-    # Display the Ledger
     if not ledger:
         st.info("No completed games evaluated yet. Your tracker will build automatically.")
     else:
@@ -313,11 +319,9 @@ with tab4:
             data = ledger[date_key]
             rate = data['win_rate']
             
-            # Format date like "April 30"
             date_obj = datetime.strptime(date_key, "%Y-%m-%d")
             nice_date = date_obj.strftime("%B %d")
             
-            # Color code based on edge
             if rate >= 70: color = "🟢"
             elif rate >= 55: color = "🟡"
             else: color = "🔴"
