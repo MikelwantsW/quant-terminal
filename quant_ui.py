@@ -10,20 +10,25 @@ st.markdown("""
     <style>
     .stApp { background-color: #0f172a !important; color: #f8fafc !important; font-family: 'Inter', sans-serif; }
     h1, h2, h3, p, span, label { color: #f8fafc !important; }
-    .streamlit-expanderHeader { background-color: #1e293b !important; border-radius: 8px !important; font-weight: bold; border: 1px solid #334155; }
+    
+    /* Fix Expander White-Out Bug */
+    [data-testid="stExpander"] details summary { background-color: #1e293b !important; color: #f8fafc !important; border: 1px solid #334155 !important; border-radius: 8px !important; }
+    [data-testid="stExpander"] details summary:hover { background-color: #334155 !important; }
+    [data-testid="stExpander"] details summary p { color: #f8fafc !important; font-weight: bold !important; }
+    
     .stTabs [data-baseweb="tab-list"] { background-color: #1e293b; border-radius: 8px; padding: 5px; gap: 10px; }
     .stTabs [data-baseweb="tab"] { color: #94a3b8; font-weight: 600; padding: 10px 15px; }
     .stTabs [aria-selected="true"] { background-color: #2563eb !important; color: white !important; border-radius: 6px; }
     .slip-box { background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px dashed #38bdf8; margin-top: 10px; }
     .league-header { background-color: #1d4ed8; color: white; padding: 8px 12px; border-radius: 6px; font-weight: bold; margin-top: 20px; margin-bottom: 10px; }
     
-    /* New Minimalist UI Classes */
-    .big-pick-box { background-color: #2563eb; padding: 30px; border-radius: 8px; text-align: center; border: 1px solid #3b82f6; }
+    /* Minimalist UI Classes */
+    .big-pick-box { background-color: #2563eb; padding: 30px; border-radius: 8px; text-align: center; border: 1px solid #3b82f6; height: 100%; display: flex; flex-direction: column; justify-content: center;}
     .big-pick-text { font-size: 28px !important; font-weight: 900 !important; color: white !important; margin-bottom: 8px; }
     .referee-tag { color: #fca5a5; font-size: 14px; font-weight: bold; text-decoration: none; }
     .referee-tag:hover { color: white !important; }
     .edge-stats { background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px solid #334155; height: 100%; }
-    .stat-line { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 12px; border-bottom: 1px solid #334155; padding-bottom: 6px; }
+    .stat-line { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 8px; border-bottom: 1px solid #334155; padding-bottom: 4px; }
     .stat-line:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
     </style>
     """, unsafe_allow_html=True)
@@ -56,7 +61,7 @@ def fetch_stats(team_id, venue):
     url = f"https://apiv3.apifootball.com/?action=get_events&team_id={team_id}&from={past_str}&to={today_str}&APIkey={API_KEY}"
     try:
         res = requests.get(url).json()
-        s = {"gf":0, "ga":0, "cf":0, "ca":0, "sotf":0, "sota":0, "cards":0, "cnt":0}
+        s = {"gf":0, "ga":0, "cf":0, "ca":0, "sotf":0, "sota":0, "shotsf":0, "shotsa":0, "cards":0, "cnt":0}
         if isinstance(res, list):
             finished = [m for m in res if m.get("match_status") == "Finished"]
             if venue == "home": relevant_games = [m for m in finished if m.get("match_hometeam_id") == team_id][-5:]
@@ -77,6 +82,12 @@ def fetch_stats(team_id, venue):
                         s["ca"] += opp_val
                     elif stype == "Yellow Cards":
                         s["cards"] += team_val
+                    elif stype == "Shots On Goal":
+                        s["sotf"] += team_val
+                        s["sota"] += opp_val
+                    elif stype == "Shots Total":
+                        s["shotsf"] += team_val
+                        s["shotsa"] += opp_val
                 
                 s["cnt"] += 1
         
@@ -85,18 +96,38 @@ def fetch_stats(team_id, venue):
     except: return None, 0
 
 def generate_ai_pick(h_st, a_st):
-    proj_h_goals = (h_st['gf'] + a_st['ga']) / 2
-    proj_a_goals = (a_st['gf'] + h_st['ga']) / 2
-    proj_total_goals = proj_h_goals + proj_a_goals
-    proj_h_corners = (h_st['cf'] + a_st['ca']) / 2
-    proj_a_corners = (a_st['cf'] + h_st['ca']) / 2
-    proj_total_corners = proj_h_corners + proj_a_corners
+    # Calculate True Math Projections for ALL markets
+    proj_goals = ((h_st['gf'] + a_st['ga']) / 2) + ((a_st['gf'] + h_st['ga']) / 2)
+    proj_corners = ((h_st['cf'] + a_st['ca']) / 2) + ((a_st['cf'] + h_st['ca']) / 2)
+    proj_sot = ((h_st['sotf'] + a_st['sota']) / 2) + ((a_st['sotf'] + h_st['sota']) / 2)
+    proj_shots = ((h_st['shotsf'] + a_st['shotsa']) / 2) + ((a_st['shotsf'] + h_st['shotsa']) / 2)
+    proj_cards = h_st['cards'] + a_st['cards']
 
-    if proj_total_corners >= 10.5: return "🔥 Over 8.5 Corners", "corners", 8.5, 95
-    elif proj_total_goals >= 3.0: return "⚽ Over 2.5 Goals", "goals", 2.5, 90
-    elif proj_total_corners >= 9.5: return "📊 Over 8.5 Corners", "corners", 8.5, 75
-    elif proj_total_goals <= 2.0: return "🛡️ Under 2.5 Goals", "under_goals", 2.5, 80
-    else: return "⚠️ NO PLAY", "pass", 0, 0
+    plays = []
+    
+    # Evaluate Goals
+    if proj_goals >= 3.2: plays.append(("⚽ Over 2.5 Goals", "goals", 2.5, 90))
+    elif proj_goals <= 1.8: plays.append(("🛡️ Under 2.5 Goals", "under_goals", 2.5, 85))
+    
+    # Evaluate Corners
+    if proj_corners >= 11.0: plays.append(("🔥 Over 8.5 Corners", "corners", 8.5, 95))
+    elif proj_corners >= 10.0: plays.append(("📊 Over 8.5 Corners", "corners", 8.5, 75))
+    
+    # Evaluate SOT
+    if proj_sot >= 10.5: plays.append(("🎯 Over 8.5 SOT", "sot", 8.5, 88))
+    
+    # Evaluate Total Shots
+    if proj_shots >= 27.0: plays.append(("🚀 Over 24.5 Shots", "shots", 24.5, 82))
+    
+    # Evaluate Cards
+    if proj_cards >= 5.8: plays.append(("🟨 Over 4.5 Cards", "cards", 4.5, 80))
+
+    if not plays:
+        return "⚠️ NO PLAY", "pass", 0, 0
+    
+    # Sort by highest confidence and return the absolute best edge
+    plays.sort(key=lambda x: x[3], reverse=True)
+    return plays[0]
 
 # --- APP LAYOUT ---
 st.markdown("<h2 style='text-align: center;'>🏦 Institutional Quant Radar</h2>", unsafe_allow_html=True)
@@ -171,7 +202,6 @@ with tab2:
             st.success("🎟️ **Your Custom Slip:**")
             for pick in selected_custom_picks: st.write(f"- {pick}")
 
-# --- TAB 3: MINIMALIST UI UPDATE ---
 with tab3:
     st.markdown("### 🔥 All System Picks Today")
     search_daily = st.text_input("🔍 Search for a specific team playing today:", key="search_daily")
@@ -194,7 +224,9 @@ with tab3:
             for m in games:
                 h_name = m.get('match_hometeam_name')
                 a_name = m.get('match_awayteam_name')
-                with st.expander(f"🕒 {m.get('match_time')} | {h_name} vs {a_name}", expanded=True):
+                
+                # Default expander closed so it doesn't clutter the screen
+                with st.expander(f"🕒 {m.get('match_time')} | {h_name} vs {a_name}"):
                     h_st, _ = fetch_stats(m.get("match_hometeam_id"), "home")
                     a_st, _ = fetch_stats(m.get("match_awayteam_id"), "away")
                     
@@ -208,12 +240,11 @@ with tab3:
                         else:
                             ref_html = "<div class='referee-tag'>⚖️ TBD</div>"
                         
-                        proj_h_goals = (h_st['gf'] + a_st['ga']) / 2
-                        proj_a_goals = (a_st['gf'] + h_st['ga']) / 2
+                        proj_goals = ((h_st['gf'] + a_st['ga']) / 2) + ((a_st['gf'] + h_st['ga']) / 2)
                         proj_corners = ((h_st['cf'] + a_st['ca']) / 2) + ((a_st['cf'] + h_st['ca']) / 2)
+                        proj_sot = ((h_st['sotf'] + a_st['sota']) / 2) + ((a_st['sotf'] + h_st['sota']) / 2)
                         proj_cards = h_st['cards'] + a_st['cards']
                         
-                        # New Asymmetrical Layout
                         c1, c2 = st.columns([3, 1.2])
                         with c1:
                             st.markdown(f"""
@@ -225,9 +256,10 @@ with tab3:
                         with c2:
                             st.markdown(f"""
                                 <div class='edge-stats'>
-                                    <div style='color:#94a3b8; font-size:11px; margin-bottom:8px; text-transform:uppercase; font-weight:bold;'>Math Edge</div>
-                                    <div class='stat-line'><span>Total xG</span> <b>{proj_h_goals + proj_a_goals:.2f}</b></div>
+                                    <div style='color:#94a3b8; font-size:11px; margin-bottom:8px; text-transform:uppercase; font-weight:bold;'>Proj. Data</div>
+                                    <div class='stat-line'><span>xG</span> <b>{proj_goals:.2f}</b></div>
                                     <div class='stat-line'><span>Corners</span> <b>{proj_corners:.1f}</b></div>
+                                    <div class='stat-line'><span>SOT</span> <b>{proj_sot:.1f}</b></div>
                                     <div class='stat-line'><span>Cards</span> <b>{proj_cards:.1f}</b></div>
                                 </div>
                             """, unsafe_allow_html=True)
