@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import json
 import os
+import time
 from datetime import datetime, timedelta
 
 # --- PAGE CONFIG ---
@@ -10,41 +11,39 @@ st.set_page_config(page_title="Institutional Radar", page_icon="🏦", layout="w
 # --- PREMIUM SPORTSBOOK CSS (BETANO STYLE) ---
 st.markdown("""
     <style>
-    /* Main Background & Font */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap');
     .stApp { background-color: #0a0e17 !important; color: #ffffff !important; font-family: 'Inter', sans-serif; }
     h1, h2, h3, p, span, label { color: #ffffff !important; }
-    
-    /* Sleek Tab Navigation */
     .stTabs [data-baseweb="tab-list"] { background-color: transparent !important; border-bottom: 2px solid #1f2937; padding-bottom: 0; gap: 24px; }
     .stTabs [data-baseweb="tab"] { color: #64748b; font-weight: 700; text-transform: uppercase; font-size: 14px; letter-spacing: 0.5px; padding: 12px 0; border-radius: 0; border-bottom: 3px solid transparent; background-color: transparent !important; }
     .stTabs [aria-selected="true"] { color: #ff5a00 !important; border-bottom: 3px solid #ff5a00 !important; }
-    
-    /* Betting Market Expanders */
     [data-testid="stExpander"] { background-color: #141b26 !important; border: 1px solid #1f2937 !important; border-radius: 10px !important; margin-bottom: 12px; overflow: hidden; }
     [data-testid="stExpander"] details summary { background-color: #1a2230 !important; padding: 16px !important; color: #ffffff !important; border-bottom: 1px solid #1f2937; }
     [data-testid="stExpander"] details summary:hover { background-color: #1f2937 !important; }
     [data-testid="stExpander"] details summary p { font-weight: 700 !important; font-size: 15px !important; }
-    
-    /* League Headers - Distinct & Sharp */
     .league-header { background-color: #1a2230; color: #ffffff; padding: 12px 16px; border-radius: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; border-left: 4px solid #ff5a00; margin-top: 24px; margin-bottom: 16px; font-size: 14px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-    
-    /* The "Betano" Orange Hero Box */
     .big-pick-box { background: linear-gradient(135deg, #ff5a00 0%, #ff8200 100%); padding: 30px; border-radius: 12px; text-align: center; box-shadow: 0 8px 25px rgba(255, 90, 0, 0.25); border: none; height: 100%; display: flex; flex-direction: column; justify-content: center; }
     .big-pick-text { font-size: 32px !important; font-weight: 900 !important; color: #ffffff !important; text-transform: uppercase; letter-spacing: -0.5px; margin-bottom: 10px; text-shadow: 1px 2px 4px rgba(0,0,0,0.15); }
     .referee-tag { color: #fff7ed; font-size: 13px; font-weight: 600; text-decoration: none; opacity: 0.9; }
     .referee-tag:hover { opacity: 1; text-decoration: underline; }
-    
-    /* Stats Box - High Contrast Grid */
     .edge-stats { background-color: #141b26; padding: 20px; border-radius: 12px; border: 1px solid #1f2937; height: 100%; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2); }
     .stat-line { display: flex; justify-content: space-between; align-items: center; font-size: 14px; color: #94a3b8; margin-bottom: 12px; border-bottom: 1px solid #1f2937; padding-bottom: 8px; }
     .stat-line:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
     .stat-line b { font-size: 16px; color: #ffffff; font-weight: 700; }
-    
-    /* Acca Slip Box */
     .slip-box { background-color: #141b26; padding: 20px; border-radius: 12px; border: 1px solid #ff5a00; border-left: 4px solid #ff5a00; margin-top: 15px; }
     </style>
     """, unsafe_allow_html=True)
+
+# --- SIDEBAR: LIVE MODE TOGGLE ---
+with st.sidebar:
+    st.markdown("<h3 style='color: #ff5a00;'>⚡ Terminal Settings</h3>", unsafe_allow_html=True)
+    live_mode = st.toggle("Enable Live Auto-Refresh (60s)", value=False)
+    if live_mode:
+        st.success("Live Mode: ACTIVE")
+        st.caption("Dashboard will automatically pull fresh data and live scores every 60 seconds.")
+    else:
+        st.warning("Live Mode: PAUSED")
+        st.caption("Dashboard is static. Toggle on to auto-refresh.")
 
 # --- TIME & FILE SETTINGS ---
 API_KEY = "4ca129dfac12e50067e9a115f4d50328619188357f590208bcbacba23789307a"
@@ -121,14 +120,11 @@ def generate_ai_pick(h_st, a_st):
     plays = []
     if proj_goals >= 3.2: plays.append(("⚽ Over 2.5 Goals", "goals", 2.5, 90))
     elif proj_goals <= 1.8: plays.append(("🛡️ Under 2.5 Goals", "under_goals", 2.5, 85))
-    
     if proj_corners >= 11.0: plays.append(("🔥 Over 8.5 Corners", "corners", 8.5, 95))
     elif proj_corners >= 10.0: plays.append(("📊 Over 8.5 Corners", "corners", 8.5, 75))
-    
     if proj_sot >= 10.5: plays.append(("🎯 Over 8.5 SOT", "sot", 8.5, 88))
     if proj_shots >= 27.0: plays.append(("🚀 Over 24.5 Shots", "shots", 24.5, 82))
     if proj_cards >= 5.8: plays.append(("🟨 Over 4.5 Cards", "cards", 4.5, 80))
-    
     if proj_tackles >= 34.0: plays.append(("🪓 Over 30.5 Tackles", "tackles", 30.5, 83))
 
     if not plays: return "⚠️ NO PLAY", "pass", 0, 0
@@ -231,7 +227,16 @@ with tab3:
                 h_name = m.get('match_hometeam_name')
                 a_name = m.get('match_awayteam_name')
                 
-                with st.expander(f"🕒 {m.get('match_time')} | {h_name} vs {a_name}"):
+                # Dynamic title to show live score if match is happening
+                match_status = m.get("match_status", "")
+                if match_status == "Finished":
+                    title_prefix = f"✅ FT | {m.get('match_hometeam_score')} - {m.get('match_awayteam_score')} |"
+                elif match_status in ["Half Time", "1st Half", "2nd Half"]:
+                    title_prefix = f"🔴 LIVE {m.get('match_hometeam_score')} - {m.get('match_awayteam_score')} |"
+                else:
+                    title_prefix = f"🕒 {m.get('match_time')} |"
+
+                with st.expander(f"{title_prefix} {h_name} vs {a_name}"):
                     h_st, _ = fetch_stats(m.get("match_hometeam_id"), "home")
                     a_st, _ = fetch_stats(m.get("match_awayteam_id"), "away")
                     
@@ -343,3 +348,8 @@ with tab4:
             with st.expander(f"{color} {nice_date} — {rate}% ({data['wins']} / {data['total']})"):
                 for detail in data['details']:
                     st.markdown(detail)
+
+# --- THE LIVE REFRESH LOOP ---
+if live_mode:
+    time.sleep(60)
+    st.rerun()
