@@ -89,31 +89,75 @@ def fetch_stats(team_id, venue):
     except: return None, 0
 
 def generate_ai_pick(h_st, a_st, league):
-    # Situational League Modifiers (Fixes La Liga Over-Inflation)
+    # Dynamic Math Edge Overhaul
     modifier = 0.80 if league == "La Liga" else 1.0 
     
     proj_g = ((h_st['gf'] + a_st['ga']) / 2) + ((a_st['gf'] + h_st['ga']) / 2)
     proj_c = (((h_st['cf'] + a_st['ca']) / 2) + ((a_st['cf'] + h_st['ca']) / 2)) * modifier
     proj_sot = ((h_st['sotf'] + a_st['sota']) / 2) + ((a_st['sotf'] + h_st['sota']) / 2)
-    proj_shots = ((h_st['shotsf'] + a_st['shotsa']) / 2) + ((a_st['shotsf'] + h_st['shotsa']) / 2)
     proj_cd = h_st['cards'] + a_st['cards']
     
     plays = []
-    # Smarter Logic: Realistic Corner Thresholds + Aggressive Under Markets
-    if proj_c >= 12.0: plays.append(("🔥 Over 9.5 Corners", "corners", 9.5, 95))
-    elif proj_c >= 10.5: plays.append(("📊 Over 8.5 Corners", "corners", 8.5, 80))
-    elif proj_c <= 7.2: plays.append(("🛡️ Under 9.5 Corners", "under_corners", 9.5, 88))
-    elif proj_c <= 6.0: plays.append(("🧊 Under 8.5 Corners", "under_corners", 8.5, 92))
     
-    if proj_g >= 3.4: plays.append(("⚽ Over 2.5 Goals", "goals", 2.5, 88))
-    elif proj_g <= 1.7: plays.append(("🔒 Under 2.5 Goals", "under_goals", 2.5, 85))
+    # 1. DYNAMIC GOALS EDGE
+    if proj_g >= 2.8:
+        line = 3.5 if proj_g >= 4.0 else 2.5 if proj_g >= 3.0 else 1.5
+        conf = min(99.0, 65.0 + ((proj_g - line) / line) * 100)
+        plays.append((f"⚽ Over {line} Goals", "goals", line, conf))
+    elif proj_g <= 2.2:
+        line = 1.5 if proj_g <= 1.2 else 2.5 if proj_g <= 2.0 else 3.5
+        conf = min(99.0, 65.0 + ((line - proj_g) / line) * 100)
+        plays.append((f"🔒 Under {line} Goals", "under_goals", line, conf))
 
-    if proj_cd >= 6.2: plays.append(("🟨 Over 4.5 Cards", "cards", 4.5, 82))
-    elif proj_cd <= 2.8: plays.append(("🧊 Under 4.5 Cards", "under_cards", 4.5, 85))
-    
-    if proj_sot >= 10.5: plays.append(("🎯 Over 8.5 SOT", "sot", 8.5, 80))
-    if proj_shots >= 27.0: plays.append(("🚀 Over 24.5 Shots", "shots", 24.5, 78))
+    # 2. DYNAMIC CORNERS EDGE
+    if proj_c >= 9.5:
+        lines = [7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5]
+        valid = [l for l in lines if l <= proj_c - 1.5]
+        if valid:
+            line = max(valid)
+            conf = min(99.0, 65.0 + ((proj_c - line) / line) * 80) # Scaled down so it doesn't overpower SOT/Goals
+            plays.append((f"🔥 Over {line} Corners", "corners", line, conf))
+    elif proj_c <= 8.5:
+        lines = [6.5, 7.5, 8.5, 9.5, 10.5, 11.5]
+        valid = [l for l in lines if l >= proj_c + 1.5]
+        if valid:
+            line = min(valid)
+            conf = min(99.0, 65.0 + ((line - proj_c) / line) * 80)
+            plays.append((f"🛡️ Under {line} Corners", "under_corners", line, conf))
 
+    # 3. DYNAMIC CARDS EDGE
+    if proj_cd >= 4.5:
+        lines = [3.5, 4.5, 5.5, 6.5]
+        valid = [l for l in lines if l <= proj_cd - 1.0]
+        if valid:
+            line = max(valid)
+            conf = min(99.0, 65.0 + ((proj_cd - line) / line) * 60) # High variance, lower weight
+            plays.append((f"🟨 Over {line} Cards", "cards", line, conf))
+    elif proj_cd <= 3.5:
+        lines = [3.5, 4.5, 5.5]
+        valid = [l for l in lines if l >= proj_cd + 1.0]
+        if valid:
+            line = min(valid)
+            conf = min(99.0, 65.0 + ((line - proj_cd) / line) * 60)
+            plays.append((f"🧊 Under {line} Cards", "under_cards", line, conf))
+
+    # 4. DYNAMIC SOT EDGE
+    if proj_sot >= 8.5:
+        lines = [7.5, 8.5, 9.5, 10.5, 11.5]
+        valid = [l for l in lines if l <= proj_sot - 1.5]
+        if valid:
+            line = max(valid)
+            conf = min(99.0, 65.0 + ((proj_sot - line) / line) * 70)
+            plays.append((f"🎯 Over {line} SOT", "sot", line, conf))
+    elif proj_sot <= 7.0:
+        lines = [6.5, 7.5, 8.5, 9.5]
+        valid = [l for l in lines if l >= proj_sot + 1.5]
+        if valid:
+            line = min(valid)
+            conf = min(99.0, 65.0 + ((line - proj_sot) / line) * 70)
+            plays.append((f"🧱 Under {line} SOT", "under_sot", line, conf))
+
+    # Sort to find the highest percentage edge relative to the line
     plays.sort(key=lambda x: x[3], reverse=True)
     return plays[0] if plays else ("⚠️ NO PLAY", "pass", 0, 0)
 
@@ -158,7 +202,7 @@ with tab1:
     if selection:
         st.markdown(f"<div class='risk-meter' style='background-color:{selection[2]};'>{selection[1]}</div>", unsafe_allow_html=True)
         valid_picks = []
-        with st.spinner("Crunching institutional data..."):
+        with st.spinner("Crunching dynamic edges across all markets..."):
             for m in daily_matches:
                 h_st, _ = fetch_stats(m.get("match_hometeam_id"), "home")
                 a_st, _ = fetch_stats(m.get("match_awayteam_id"), "away")
