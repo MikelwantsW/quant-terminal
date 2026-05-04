@@ -1,641 +1,674 @@
-Import streamlit as st
+import streamlit as st
 import requests
+import time
 from datetime import datetime, timedelta
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
+#  PAGE CONFIG
+# ─────────────────────────────────────────
+st.set_page_config(
+    page_title="Institutional Radar",
+    page_icon="🏦",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# PAGE CONFIG
-
-# ─────────────────────────────────────────────
-
-st.set_page_config(page_title=“Institutional Radar”, page_icon=“🏦”, layout=“wide”)
-
-# ─────────────────────────────────────────────
-
-# STYLES
-
-# ─────────────────────────────────────────────
-
-st.markdown(”””
-
+# ─────────────────────────────────────────
+#  GLOBAL CSS
+# ─────────────────────────────────────────
+st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&family=Inter:wght@400;500;600&display=swap');
 
-html, body, [class*="css"] { font-family: 'Space Mono', monospace !important; }
+/* ── base ── */
+.stApp { background-color: #080d14 !important; color: #e2e8f0 !important; font-family: 'Inter', sans-serif; }
+section[data-testid="stSidebar"] { background-color: #0d1520 !important; border-right: 1px solid #1e293b; }
 
-.stApp { background: #080c14 !important; color: #e2e8f0 !important; }
+/* ── tabs ── */
+.stTabs [data-baseweb="tab-list"] { background: #0d1520; border-radius: 10px; padding: 6px; gap: 6px; border: 1px solid #1e293b; }
+.stTabs [data-baseweb="tab"] { color: #64748b; font-weight: 600; font-size: 13px; padding: 10px 18px; border-radius: 7px; font-family: 'Inter', sans-serif; }
+.stTabs [aria-selected="true"] { background: linear-gradient(135deg, #16a34a, #15803d) !important; color: white !important; box-shadow: 0 4px 12px rgba(22,163,74,0.35); }
 
-/* Tabs */
-.stTabs [data-baseweb="tab-list"] {
-    background: #0f172a; border-radius: 8px; padding: 4px; gap: 6px;
-    border: 1px solid #1e293b;
+/* ── expander ── */
+[data-testid="stExpander"] { background: #0d1520 !important; border: 1px solid #1e293b !important; border-radius: 10px !important; margin-bottom: 10px !important; }
+[data-testid="stExpander"] summary { background: #0d1520 !important; color: #e2e8f0 !important; font-weight: 600; }
+[data-testid="stExpander"] summary:hover { background: #1e293b !important; }
+
+/* ── buttons ── */
+.stButton > button {
+    background: #0d1520 !important;
+    color: #94a3b8 !important;
+    border: 1px solid #1e293b !important;
+    border-radius: 8px !important;
+    font-weight: 700 !important;
+    font-size: 13px !important;
+    width: 100%;
+    transition: all 0.2s ease;
 }
-.stTabs [data-baseweb="tab"] { color: #64748b; font-weight: 700; font-size: 13px; padding: 8px 18px; border-radius: 6px; }
-.stTabs [aria-selected="true"] { background: #f97316 !important; color: #080c14 !important; }
-
-/* Expanders */
-[data-testid="stExpander"] {
-    background: #0f172a !important; border: 1px solid #1e293b !important;
-    border-radius: 10px !important; margin-bottom: 8px !important;
-}
-[data-testid="stExpander"] summary { color: #e2e8f0 !important; background: #0f172a !important; }
-
-/* Sidebar */
-[data-testid="stSidebar"] { background: #080c14 !important; border-right: 1px solid #1e293b; }
-
-/* Inputs */
-[data-testid="stTextInput"] input {
-    background: #0f172a !important; border: 1px solid #334155 !important;
-    color: #e2e8f0 !important; border-radius: 8px !important;
+.stButton > button:hover {
+    border-color: #16a34a !important;
+    color: #4ade80 !important;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(22,163,74,0.2) !important;
 }
 
-/* Metric */
-[data-testid="metric-container"] { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 12px; }
+/* ── metrics ── */
+[data-testid="stMetric"] { background: #0d1520; border: 1px solid #1e293b; border-radius: 10px; padding: 16px; }
+[data-testid="stMetricValue"] { font-family: 'DM Mono', monospace !important; color: #4ade80 !important; font-size: 28px !important; }
+[data-testid="stMetricLabel"] { color: #64748b !important; font-size: 12px !important; text-transform: uppercase; letter-spacing: 1px; }
 
-/* Divider */
-hr { border-color: #1e293b !important; }
+/* ── spinner ── */
+.stSpinner > div { border-top-color: #16a34a !important; }
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-
-/* Custom components */
+/* ── custom components ── */
 .page-title {
-    font-family: 'Syne', sans-serif !important;
-    font-size: 2.2rem; font-weight: 800; letter-spacing: -1px;
-    background: linear-gradient(135deg, #f97316, #fb923c, #fbbf24);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    text-align: center; padding: 10px 0 4px;
+    font-family: 'Syne', sans-serif;
+    font-size: 36px;
+    font-weight: 800;
+    text-align: center;
+    background: linear-gradient(135deg, #4ade80, #16a34a, #f97316);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 4px;
+    letter-spacing: -1px;
 }
-.sub-title { text-align: center; color: #475569; font-size: 12px; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 20px; }
+.page-sub { text-align: center; color: #475569; font-size: 13px; margin-bottom: 28px; font-family: 'DM Mono', monospace; letter-spacing: 1px; }
 
-.league-bar {
-    background: #0f172a; border-left: 3px solid #f97316;
-    padding: 7px 14px; border-radius: 6px; font-weight: 700; font-size: 13px;
-    letter-spacing: 1px; text-transform: uppercase; color: #f97316; margin: 18px 0 8px;
+.league-header {
+    background: #0d1520;
+    color: #94a3b8;
+    padding: 8px 14px;
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin: 20px 0 8px;
+    border-left: 3px solid #f97316;
 }
 
 .pick-card {
-    background: linear-gradient(135deg, #0f2d1a, #0f1f2d);
-    border: 1px solid #22c55e; border-radius: 12px;
-    padding: 20px; text-align: center;
+    background: linear-gradient(135deg, #0d2218, #0a1f15);
+    border: 1px solid #166534;
+    border-radius: 12px;
+    padding: 22px;
+    text-align: center;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    box-shadow: 0 8px 24px rgba(22,163,74,0.12);
 }
-.pick-label { font-family: 'Syne', sans-serif !important; font-size: 1.5rem; font-weight: 800; color: #22c55e; }
-.conf-bar-bg { background: #1e293b; border-radius: 4px; height: 6px; margin-top: 10px; overflow: hidden; }
-.conf-bar-fill { height: 6px; border-radius: 4px; background: linear-gradient(90deg, #f97316, #22c55e); }
-
-.stat-box { background: #0f172a; border: 1px solid #1e293b; border-top: 2px solid #f97316; border-radius: 10px; padding: 14px; }
-.stat-row { display: flex; justify-content: space-between; font-size: 12px; padding: 5px 0; border-bottom: 1px solid #1e293b; }
-.stat-row:last-child { border-bottom: none; }
-.stat-label { color: #64748b; }
-.stat-val { font-weight: 700; color: #f8fafc; }
-
-.live-banner {
-    background: #7f1d1d; border: 1px solid #ef4444; color: #fca5a5;
-    border-radius: 8px; padding: 8px 14px; font-weight: 700; font-size: 14px;
-    display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+.pick-label {
+    font-family: 'Syne', sans-serif;
+    font-size: 22px;
+    font-weight: 800;
+    color: #4ade80;
+    margin-bottom: 10px;
 }
-.live-dot { width:8px; height:8px; background:#ef4444; border-radius:50%; display:inline-block; animation: pulse 1s ease-in-out infinite; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.2} }
-
-.slip-item {
-    background: #0f172a; border: 1px solid #1e293b; border-radius: 10px;
-    padding: 14px 16px; margin-bottom: 8px;
-}
-.slip-match { font-size: 13px; font-weight: 700; color: #e2e8f0; }
-.slip-meta { font-size: 11px; color: #475569; margin-bottom: 6px; }
-.slip-pick { font-size: 13px; color: #f97316; font-weight: 700; }
-.slip-conf { font-size: 11px; color: #22c55e; }
-
-.risk-badge {
-    border-radius: 8px; padding: 10px 0; text-align: center;
-    font-family: 'Syne', sans-serif; font-weight: 800; font-size: 14px;
-    letter-spacing: 2px; text-transform: uppercase; margin-bottom: 16px;
-}
-
-.acc-row {
-    background: #0f172a; border: 1px solid #1e293b; border-radius: 8px;
-    padding: 10px 14px; margin-bottom: 6px; display: flex;
-    justify-content: space-between; align-items: center; font-size: 12px;
-}
-.acc-match { color: #cbd5e1; font-weight: 700; }
-.acc-pick  { color: #94a3b8; font-size: 11px; }
-.acc-win   { color: #22c55e; font-weight: 900; font-size: 16px; }
-.acc-loss  { color: #ef4444; font-weight: 900; font-size: 16px; }
-
 .ref-tag {
-    background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.3);
-    color: #fbbf24; font-size: 11px; padding: 3px 8px; border-radius: 4px;
-    text-decoration: none; display: inline-block; margin-top: 6px;
+    display: inline-block;
+    background: rgba(249,115,22,0.12);
+    color: #fb923c;
+    border: 1px solid rgba(249,115,22,0.3);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    text-decoration: none;
+    margin-top: 8px;
+    font-family: 'DM Mono', monospace;
 }
 
-.no-play { color: #475569; font-size: 12px; font-style: italic; padding: 10px; text-align: center; }
+.stats-panel {
+    background: #080d14;
+    border: 1px solid #1e293b;
+    border-top: 2px solid #f97316;
+    border-radius: 10px;
+    padding: 16px;
+    height: 100%;
+}
+.stats-title { color: #f97316; font-size: 10px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 12px; font-family: 'DM Mono', monospace; }
+.stat-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #64748b; padding: 6px 0; border-bottom: 1px solid #0d1520; }
+.stat-row:last-child { border-bottom: none; }
+.stat-val { font-family: 'DM Mono', monospace; color: #e2e8f0; font-weight: 600; font-size: 14px; }
+
+.conf-bar-wrap { margin-top: 14px; }
+.conf-label { font-size: 10px; color: #475569; font-family: 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+.conf-bar-bg { background: #1e293b; border-radius: 20px; height: 6px; width: 100%; overflow: hidden; }
+.conf-bar-fill { height: 6px; border-radius: 20px; background: linear-gradient(90deg, #16a34a, #4ade80); transition: width 0.6s ease; }
+
+.slip-box {
+    background: #0d1520;
+    border: 1px dashed #f97316;
+    border-radius: 10px;
+    padding: 20px;
+    margin-top: 12px;
+}
+.slip-row { padding: 12px 0; border-bottom: 1px solid #1e293b; font-size: 14px; }
+.slip-row:last-child { border-bottom: none; }
+.slip-league { font-size: 10px; color: #64748b; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; font-family: 'DM Mono', monospace; }
+.slip-match { font-weight: 600; color: #e2e8f0; margin: 3px 0; }
+.slip-pick { font-weight: 800; font-family: 'Syne', sans-serif; font-size: 15px; }
+
+.live-banner { background: #7f1d1d; border: 1px solid #ef4444; color: #fca5a5; padding: 8px 16px; border-radius: 8px; font-weight: 700; font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 10px; }
+.live-dot { height: 8px; width: 8px; background: #ef4444; border-radius: 50%; display: inline-block; animation: pulse 1.2s ease infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.7); } }
+
+.risk-badge { padding: 12px 20px; border-radius: 8px; text-align: center; font-family: 'Syne', sans-serif; font-weight: 800; font-size: 18px; letter-spacing: 1px; color: white; margin-bottom: 20px; }
+
+.empty-state { text-align: center; padding: 60px 20px; color: #334155; }
+.empty-state-icon { font-size: 48px; margin-bottom: 12px; }
+.empty-state-text { font-size: 16px; font-weight: 600; }
+.empty-state-sub { font-size: 13px; color: #1e293b; margin-top: 6px; }
+
+.accuracy-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #0d1520; border-radius: 8px; margin-bottom: 6px; border: 1px solid #1e293b; font-size: 13px; }
+.acc-win { border-left: 3px solid #16a34a; }
+.acc-loss { border-left: 3px solid #ef4444; }
+
+.info-box { background: #0d1520; border: 1px solid #1e293b; border-radius: 10px; padding: 16px 20px; margin-bottom: 16px; font-size: 13px; color: #64748b; }
 </style>
+""", unsafe_allow_html=True)
 
-“””, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
+#  CONFIG
+# ─────────────────────────────────────────
+API_KEY = st.secrets.get("APIFOOTBALL_KEY", "4ca129dfac12e50067e9a115f4d50328619188357f590208bcbacba23789307a")
 
-# CONFIG  (move API key to st.secrets in prod)
-
-# ─────────────────────────────────────────────
-
-API_KEY = st.secrets.get(“APIFOOTBALL_KEY”, “4ca129dfac12e50067e9a115f4d50328619188357f590208bcbacba23789307a”)
-
-today      = datetime.utcnow() + timedelta(hours=1)
-today_str  = today.strftime(’%Y-%m-%d’)
-yest_str   = (today - timedelta(days=1)).strftime(’%Y-%m-%d’)
-week_str   = (today + timedelta(days=7)).strftime(’%Y-%m-%d’)
-past_str   = (today - timedelta(days=90)).strftime(’%Y-%m-%d’)
+now = datetime.utcnow() + timedelta(hours=1)
+today_str    = now.strftime('%Y-%m-%d')
+yesterday_str= (now - timedelta(days=1)).strftime('%Y-%m-%d')
+week_out_str = (now + timedelta(days=7)).strftime('%Y-%m-%d')
+past_str     = (now - timedelta(days=90)).strftime('%Y-%m-%d')
 
 TOP_LEAGUES = {
-“Premier League”, “Serie A”, “La Liga”, “Bundesliga”, “Ligue 1”,
-“UEFA Champions League”, “UEFA Europa League”, “UEFA Europa Conference League”,
-“Championship”, “Eredivisie”, “Primeira Liga”, “Süper Lig”, “Major League Soccer”,
+    "Premier League", "Serie A", "La Liga", "Bundesliga", "Ligue 1",
+    "UEFA Champions League", "UEFA Europa League", "UEFA Europa Conference League",
+    "Championship", "Eredivisie", "Primeira Liga", "Süper Lig", "Major League Soccer"
 }
 
-RISK_TIERS = [
-(2,  “SAFE DOUBLE”,    “#16a34a”, 2),
-(4,  “MODERATE”,       “#ca8a04”, 4),
-(6,  “AGGRESSIVE”,     “#ea580c”, 6),
-(8,  “SYSTEM ACCA”,    “#dc2626”, 8),
-(12, “WHALE TIER”,     “#7c3aed”, 12),
-(15, “QUANT JACKPOT”,  “#1d4ed8”, 15),
-(18, “THE GAUNTLET”,   “#c2410c”, 18),
-(25, “MOONSHOT”,       “#881337”, 25),
+LIVE_STATUSES = {"1H", "HT", "2H", "ET", "P", "LIVE", "Break"}
+
+TIER_CONFIG = [
+    (2,  "SAFE DOUBLE",   "#16a34a", "🟢"),
+    (4,  "MODERATE",      "#eab308", "🟡"),
+    (6,  "AGGRESSIVE",    "#f97316", "🟠"),
+    (8,  "SYSTEM ACCA",   "#dc2626", "🔴"),
+    (12, "WHALE TIER",    "#9333ea", "🟣"),
+    (15, "QUANT JACKPOT", "#2563eb", "🔵"),
+    (18, "THE GAUNTLET",  "#ea580c", "🔥"),
+    (25, "MOONSHOT",      "#6b21a8", "🌌"),
 ]
 
-# ─────────────────────────────────────────────
+ODDS_LABELS = ["2.0×", "5.0×", "10.0×", "20.0×", "100.0×", "250.0×", "500.0×", "1000.0×+"]
 
-# UTILITIES
 
-# ─────────────────────────────────────────────
-
+# ─────────────────────────────────────────
+#  HELPERS
+# ─────────────────────────────────────────
 def safe_num(v):
-if v is None: return 0.0
-try: return float(str(v).replace(”%”,””).strip())
-except: return 0.0
+    if v is None: return 0.0
+    try: return float(str(v).replace("%", "").strip())
+    except: return 0.0
 
-def match_is_live(status: str) -> bool:
-“”“Returns True only for genuinely live statuses.”””
-if not status: return False
-finished_tokens = {“finished”, “postponed”, “cancelled”, “awarded”, “abandoned”, “”}
-if status.lower() in finished_tokens: return False
-if status.isdigit(): return True          # e.g. “45”, “90+2”
-live_tokens = {“ht”, “et”, “pen”, “live”, “in play”}
-return any(t in status.lower() for t in live_tokens)
 
-# ─────────────────────────────────────────────
+def is_live_status(status: str) -> bool:
+    if not status: return False
+    s = str(status).strip()
+    return s in LIVE_STATUSES or (s.isdigit() and 1 <= int(s) <= 120)
 
-# DATA FETCHING
 
-# ─────────────────────────────────────────────
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_stats(team_id, venue):
+    url = (
+        f"https://apiv3.apifootball.com/?action=get_events"
+        f"&team_id={team_id}&from={past_str}&to={today_str}&APIkey={API_KEY}"
+    )
+    try:
+        res = requests.get(url, timeout=10).json()
+        s = {"gf":0,"ga":0,"cf":0,"ca":0,"sotf":0,"sota":0,"shotsf":0,"shotsa":0,"cards":0,"cnt":0}
+        if not isinstance(res, list):
+            return None, 0
+        id_key = "match_hometeam_id" if venue == "home" else "match_awayteam_id"
+        finished = [m for m in res if m.get("match_status") == "Finished"
+                    and m.get(id_key) == team_id][-5:]
+        for m in finished:
+            is_h = m.get("match_hometeam_id") == team_id
+            s["gf"] += safe_num(m.get("match_hometeam_score" if is_h else "match_awayteam_score"))
+            s["ga"] += safe_num(m.get("match_awayteam_score" if is_h else "match_hometeam_score"))
+            for row in m.get("statistics", []):
+                t_val = safe_num(row.get("home" if is_h else "away"))
+                o_val = safe_num(row.get("away" if is_h else "home"))
+                stype = row.get("type")
+                if stype == "Corners":        s["cf"] += t_val; s["ca"] += o_val
+                elif stype == "Yellow Cards": s["cards"] += t_val
+                elif stype == "Shots On Goal":  s["sotf"] += t_val; s["sota"] += o_val
+                elif stype == "Shots Total":    s["shotsf"] += t_val; s["shotsa"] += o_val
+            s["cnt"] += 1
+        n = s["cnt"]
+        return ({k: (v/n if n else 0) for k, v in s.items() if k != "cnt"}, n)
+    except Exception:
+        return None, 0
 
-@st.cache_data(ttl=600)
-def fetch_team_stats(team_id, venue):
-url = (f”https://apiv3.apifootball.com/?action=get_events”
-f”&team_id={team_id}&from={past_str}&to={today_str}&APIkey={API_KEY}”)
-try:
-res = requests.get(url, timeout=10).json()
-except Exception:
-return None, 0
 
-```
-s = {"gf":0,"ga":0,"cf":0,"ca":0,"sotf":0,"sota":0,"shotsf":0,"shotsa":0,"cards":0,"cnt":0}
-if not isinstance(res, list):
-    return None, 0
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_events(date_from, date_to):
+    url = (
+        f"https://apiv3.apifootball.com/?action=get_events"
+        f"&from={date_from}&to={date_to}&APIkey={API_KEY}"
+    )
+    try:
+        res = requests.get(url, timeout=15).json()
+        if isinstance(res, list):
+            return [m for m in res if m.get("league_name") in TOP_LEAGUES]
+        return []
+    except Exception:
+        return []
 
-venue_key = "match_hometeam_id" if venue == "home" else "match_awayteam_id"
-finished  = [m for m in res if m.get("match_status","").lower() == "finished"]
-relevant  = [m for m in finished if m.get(venue_key) == team_id][-5:]
 
-for m in relevant:
-    is_h = m.get("match_hometeam_id") == team_id
-    s["gf"] += safe_num(m.get("match_hometeam_score" if is_h else "match_awayteam_score"))
-    s["ga"] += safe_num(m.get("match_awayteam_score" if is_h else "match_hometeam_score"))
-    for row in m.get("statistics", []):
-        t_v = safe_num(row.get("home" if is_h else "away"))
-        o_v = safe_num(row.get("away" if is_h else "home"))
-        st_ = row.get("type","")
-        if st_ == "Corners":          s["cf"] += t_v; s["ca"] += o_v
-        elif st_ == "Yellow Cards":   s["cards"] += t_v
-        elif st_ == "Shots On Goal":  s["sotf"] += t_v; s["sota"] += o_v
-        elif st_ == "Shots Total":    s["shotsf"] += t_v; s["shotsa"] += o_v
-    s["cnt"] += 1
+def generate_ai_pick(h_st, a_st, league):
+    modifier = 0.80 if league == "La Liga" else 1.0
 
-n = s["cnt"]
-if n == 0:
-    return None, 0
-return {k: v/n for k,v in s.items() if k != "cnt"}, n
-```
+    proj_g   = ((h_st['gf']+a_st['ga'])/2) + ((a_st['gf']+h_st['ga'])/2)
+    proj_c   = (((h_st['cf']+a_st['ca'])/2) + ((a_st['cf']+h_st['ca'])/2)) * modifier
+    proj_sot = ((h_st['sotf']+a_st['sota'])/2) + ((a_st['sotf']+h_st['sota'])/2)
+    proj_cd  = h_st['cards'] + a_st['cards']
 
-@st.cache_data(ttl=600)
-def fetch_fixtures(date_from, date_to):
-url = (f”https://apiv3.apifootball.com/?action=get_events”
-f”&from={date_from}&to={date_to}&APIkey={API_KEY}”)
-try:
-res = requests.get(url, timeout=15).json()
-if isinstance(res, list):
-return [m for m in res if m.get(“league_name”) in TOP_LEAGUES]
-except Exception:
-pass
-return []
+    plays = []
 
-# ─────────────────────────────────────────────
+    # Goals
+    if proj_g >= 2.8:
+        line = 3.5 if proj_g >= 4.0 else 2.5 if proj_g >= 3.0 else 1.5
+        conf = min(99.0, 65.0 + ((proj_g - line) / max(line,0.01)) * 100)
+        plays.append((f"⚽ Over {line} Goals", "goals", line, conf))
+    elif proj_g <= 2.2:
+        line = 1.5 if proj_g <= 1.2 else 2.5 if proj_g <= 2.0 else 3.5
+        conf = min(99.0, 65.0 + ((line - proj_g) / max(line,0.01)) * 100)
+        plays.append((f"🔒 Under {line} Goals", "under_goals", line, conf))
 
-# PICK ENGINE
+    # Corners
+    if proj_c >= 9.5:
+        valid = [l for l in [7.5,8.5,9.5,10.5,11.5,12.5,13.5] if l <= proj_c - 1.5]
+        if valid:
+            line = max(valid)
+            conf = min(99.0, 65.0 + ((proj_c - line) / max(line,0.01)) * 80)
+            plays.append((f"🔥 Over {line} Corners", "corners", line, conf))
+    elif proj_c <= 8.5:
+        valid = [l for l in [6.5,7.5,8.5,9.5,10.5,11.5] if l >= proj_c + 1.5]
+        if valid:
+            line = min(valid)
+            conf = min(99.0, 65.0 + ((line - proj_c) / max(line,0.01)) * 80)
+            plays.append((f"🛡️ Under {line} Corners", "under_corners", line, conf))
 
-# ─────────────────────────────────────────────
+    # Cards
+    if proj_cd >= 4.5:
+        valid = [l for l in [3.5,4.5,5.5,6.5] if l <= proj_cd - 1.0]
+        if valid:
+            line = max(valid)
+            conf = min(99.0, 65.0 + ((proj_cd - line) / max(line,0.01)) * 60)
+            plays.append((f"🟨 Over {line} Cards", "cards", line, conf))
+    elif proj_cd <= 3.5:
+        valid = [l for l in [3.5,4.5,5.5] if l >= proj_cd + 1.0]
+        if valid:
+            line = min(valid)
+            conf = min(99.0, 65.0 + ((line - proj_cd) / max(line,0.01)) * 60)
+            plays.append((f"🧊 Under {line} Cards", "under_cards", line, conf))
 
-CORNER_MOD = {“La Liga”: 0.80, “Serie A”: 0.90}
+    # SOT
+    if proj_sot >= 8.5:
+        valid = [l for l in [7.5,8.5,9.5,10.5,11.5] if l <= proj_sot - 1.5]
+        if valid:
+            line = max(valid)
+            conf = min(99.0, 65.0 + ((proj_sot - line) / max(line,0.01)) * 70)
+            plays.append((f"🎯 Over {line} SOT", "sot", line, conf))
+    elif proj_sot <= 7.0:
+        valid = [l for l in [6.5,7.5,8.5,9.5] if l >= proj_sot + 1.5]
+        if valid:
+            line = min(valid)
+            conf = min(99.0, 65.0 + ((line - proj_sot) / max(line,0.01)) * 70)
+            plays.append((f"🧱 Under {line} SOT", "under_sot", line, conf))
 
-def generate_pick(h, a, league):
-“””
-Returns list of (label, market_type, line, confidence).
-Sorted best-first. Empty list = no play.
-“””
-mod  = CORNER_MOD.get(league, 1.0)
-pg   = ((h[“gf”]+a[“ga”])/2) + ((a[“gf”]+h[“ga”])/2)
-pc   = (((h[“cf”]+a[“ca”])/2) + ((a[“cf”]+h[“ca”])/2)) * mod
-psot = ((h[“sotf”]+a[“sota”])/2) + ((a[“sotf”]+h[“sota”])/2)
-pcd  = h[“cards”] + a[“cards”]
+    plays.sort(key=lambda x: x[3], reverse=True)
+    return plays[0] if plays else ("⚠️ NO PLAY", "pass", 0, 0)
 
-```
-plays = []
-
-def add(label, mtype, line, raw_edge, weight):
-    conf = min(99.0, 65.0 + (raw_edge / max(line,0.01)) * weight)
-    plays.append((label, mtype, line, round(conf,1)))
-
-# Goals
-if pg >= 2.8:
-    line = 3.5 if pg >= 4.0 else 2.5 if pg >= 3.0 else 1.5
-    add(f"⚽ Over {line} Goals",  "over_goals",  line, pg-line, 100)
-elif pg <= 2.2:
-    line = 1.5 if pg <= 1.2 else 2.5 if pg <= 2.0 else 3.5
-    add(f"🔒 Under {line} Goals", "under_goals", line, line-pg, 100)
-
-# Corners
-if pc >= 9.5:
-    valid = [l for l in [7.5,8.5,9.5,10.5,11.5,12.5,13.5] if l <= pc-1.5]
-    if valid: add(f"🔥 Over {max(valid)} Corners",  "over_corners",  max(valid), pc-max(valid), 80)
-elif pc <= 8.5:
-    valid = [l for l in [6.5,7.5,8.5,9.5,10.5,11.5] if l >= pc+1.5]
-    if valid: add(f"🛡️ Under {min(valid)} Corners", "under_corners", min(valid), min(valid)-pc, 80)
-
-# Cards
-if pcd >= 4.5:
-    valid = [l for l in [3.5,4.5,5.5,6.5] if l <= pcd-1.0]
-    if valid: add(f"🟨 Over {max(valid)} Cards",  "over_cards",  max(valid), pcd-max(valid), 60)
-elif pcd <= 3.5:
-    valid = [l for l in [3.5,4.5,5.5] if l >= pcd+1.0]
-    if valid: add(f"🧊 Under {min(valid)} Cards", "under_cards", min(valid), min(valid)-pcd, 60)
-
-# Shots on target
-if psot >= 8.5:
-    valid = [l for l in [7.5,8.5,9.5,10.5,11.5] if l <= psot-1.5]
-    if valid: add(f"🎯 Over {max(valid)} SOT",  "over_sot",  max(valid), psot-max(valid), 70)
-elif psot <= 7.0:
-    valid = [l for l in [6.5,7.5,8.5,9.5] if l >= psot+1.5]
-    if valid: add(f"🧱 Under {min(valid)} SOT", "under_sot", min(valid), min(valid)-psot, 70)
-
-plays.sort(key=lambda x: x[3], reverse=True)
-return plays
-```
-
-def top_pick(h, a, league):
-plays = generate_pick(h, a, league)
-return plays[0] if plays else (“⚠️ NO PLAY”, “none”, 0, 0)
 
 def check_result(p_type, thresh, match):
-“”“Returns True/False/None (None = unverifiable market).”””
-goals = safe_num(match.get(“match_hometeam_score”,0)) + safe_num(match.get(“match_awayteam_score”,0))
-corners = cards = sot = None
+    """Return True/False/None (None = uncheckaable market)."""
+    goals = safe_num(match.get("match_hometeam_score","0")) + safe_num(match.get("match_awayteam_score","0"))
+    stats = {row.get("type"): (safe_num(row.get("home",0)) + safe_num(row.get("away",0)))
+             for row in match.get("statistics", [])}
+    if p_type == "goals":        return goals > thresh
+    if p_type == "under_goals":  return goals < thresh
+    if p_type == "corners":      return stats.get("Corners", 0) > thresh
+    if p_type == "under_corners":return stats.get("Corners", 0) < thresh
+    if p_type == "cards":        return stats.get("Yellow Cards", 0) > thresh
+    if p_type == "under_cards":  return stats.get("Yellow Cards", 0) < thresh
+    if p_type == "sot":          return stats.get("Shots On Goal", 0) > thresh
+    if p_type == "under_sot":    return stats.get("Shots On Goal", 0) < thresh
+    return None
 
-```
-for row in match.get("statistics", []):
-    val = safe_num(row.get("home",0)) + safe_num(row.get("away",0))
-    t   = row.get("type","")
-    if t == "Corners":        corners = val
-    elif t == "Yellow Cards": cards   = val
-    elif t == "Shots On Goal":sot     = val
 
-checks = {
-    "over_goals":   lambda: goals   > thresh if goals   is not None else None,
-    "under_goals":  lambda: goals   < thresh if goals   is not None else None,
-    "over_corners": lambda: corners > thresh if corners is not None else None,
-    "under_corners":lambda: corners < thresh if corners is not None else None,
-    "over_cards":   lambda: cards   > thresh if cards   is not None else None,
-    "under_cards":  lambda: cards   < thresh if cards   is not None else None,
-    "over_sot":     lambda: sot     > thresh if sot     is not None else None,
-    "under_sot":    lambda: sot     < thresh if sot     is not None else None,
-}
-fn = checks.get(p_type)
-return fn() if fn else None
-```
+def conf_bar_html(conf, color="#16a34a"):
+    pct = int(conf)
+    return f"""
+    <div class='conf-bar-wrap'>
+        <div class='conf-label'>EDGE CONFIDENCE</div>
+        <div style='display:flex; align-items:center; gap:8px;'>
+            <div class='conf-bar-bg' style='flex:1;'><div class='conf-bar-fill' style='width:{pct}%; background:linear-gradient(90deg,{color},{color}88);'></div></div>
+            <span style='font-family:DM Mono,monospace; font-size:13px; color:{color}; font-weight:700;'>{pct}%</span>
+        </div>
+    </div>"""
 
-# ─────────────────────────────────────────────
 
-# SIDEBAR
-
-# ─────────────────────────────────────────────
-
+# ─────────────────────────────────────────
+#  SIDEBAR
+# ─────────────────────────────────────────
 with st.sidebar:
-st.markdown(”<div style='font-family:Syne,sans-serif;font-size:1.1rem;font-weight:800;color:#f97316;padding:8px 0 4px;'>⚡ RADAR TERMINAL</div>”, unsafe_allow_html=True)
-st.caption(f”Session date: {today_str}”)
+    st.markdown("### ⚡ Terminal")
+    st.markdown(f"<div style='font-family:DM Mono,monospace; font-size:11px; color:#475569;'>DATE · {today_str}</div>", unsafe_allow_html=True)
+    st.divider()
 
-```
-if st.button("🧹 Clear Cache & Refresh"):
-    st.cache_data.clear()
-    st.rerun()
+    if st.button("🧹 Refresh Cache", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
-auto_refresh = st.toggle("🔄 Auto-refresh (60s)", value=False)
-if auto_refresh:
-    st.success("🟢 LIVE MODE")
-    import time; time.sleep(60); st.rerun()
-
-st.divider()
-st.caption("ℹ️ Data: last 5 venue-specific matches · TTL 10 min")
-st.caption("⚠️ For entertainment purposes only.")
-```
-
-# ─────────────────────────────────────────────
-
-# HEADER
-
-# ─────────────────────────────────────────────
-
-st.markdown(”<div class='page-title'>🏦 Institutional Quant Radar</div>”, unsafe_allow_html=True)
-st.markdown(”<div class='sub-title'>algorithmic edge · verified fixtures · real-time data</div>”, unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────
-
-# LOAD DATA (once, shared across tabs)
-
-# ─────────────────────────────────────────────
-
-with st.spinner(“Loading fixture data…”):
-daily   = fetch_fixtures(today_str, today_str)
-weekly  = fetch_fixtures(today_str, week_str)
-yest    = fetch_fixtures(yest_str,  yest_str)
-
-# ─────────────────────────────────────────────
-
-# TABS
-
-# ─────────────────────────────────────────────
-
-tab1, tab2, tab3, tab4 = st.tabs([“🎟️ Auto-Acca”, “📝 Weekly Slip”, “🔥 Daily Picks”, “📊 Accuracy”])
-
-# ════════════════════════════════════════════
-
-# TAB 1 — AUTO ACCA
-
-# ════════════════════════════════════════════
-
-with tab1:
-st.markdown(”### 🎟️ Algorithmic Ticket Generator”)
-st.caption(“Select a target odds tier to generate the best picks.”)
-
-```
-cols = st.columns(4)
-selection = None
-for i, (odds, label, color, n_picks) in enumerate(RISK_TIERS):
-    with cols[i % 4]:
-        emoji = ["🟢","🟡","🟠","🔴","🟣","🔵","🔥","🌌"][i]
-        if st.button(f"{emoji} {odds}.0x", use_container_width=True):
-            selection = (n_picks, label, color)
-
-if selection:
-    n_picks, label, color = selection
-    st.markdown(f"<div class='risk-badge' style='background:{color}22;border:1px solid {color};color:{color};'>{label} — TOP {n_picks} PICKS</div>", unsafe_allow_html=True)
-
-    valid_picks = []
-    with st.spinner("Running edge model across all markets…"):
-        for m in daily:
-            h_st, h_n = fetch_team_stats(m.get("match_hometeam_id"), "home")
-            a_st, a_n = fetch_team_stats(m.get("match_awayteam_id"), "away")
-            if h_st and a_st:
-                pk, ptype, thresh, conf = top_pick(h_st, a_st, m.get("league_name",""))
-                if conf > 0:
-                    valid_picks.append({
-                        "match":  f"{m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}",
-                        "league": m.get("league_name",""),
-                        "time":   m.get("match_time",""),
-                        "pick":   pk,
-                        "conf":   conf,
-                        "h_n":    h_n,
-                        "a_n":    a_n,
-                    })
-
-    valid_picks.sort(key=lambda x: x["conf"], reverse=True)
-    shown = valid_picks[:n_picks]
-
-    if not shown:
-        st.warning("No qualifying picks found for today. Try again later.")
-    else:
-        for p in shown:
-            data_quality = "🟢" if min(p["h_n"], p["a_n"]) >= 4 else "🟡" if min(p["h_n"], p["a_n"]) >= 2 else "🔴"
-            st.markdown(f"""
-            <div class='slip-item'>
-              <div class='slip-meta'>🏆 {p['league']} &nbsp;·&nbsp; 🕒 {p['time']} &nbsp;·&nbsp; {data_quality} {min(p['h_n'], p['a_n'])} games sampled</div>
-              <div class='slip-match'>{p['match']}</div>
-              <div style='display:flex;justify-content:space-between;align-items:center;margin-top:6px;'>
-                <div class='slip-pick'>{p['pick']}</div>
-                <div class='slip-conf'>{p['conf']}% edge</div>
-              </div>
-              <div class='conf-bar-bg'><div class='conf-bar-fill' style='width:{min(p['conf'],99)}%;'></div></div>
-            </div>
-            """, unsafe_allow_html=True)
-```
-
-# ════════════════════════════════════════════
-
-# TAB 2 — WEEKLY SLIP
-
-# ════════════════════════════════════════════
-
-with tab2:
-st.markdown(”### 📝 Weekly Fixture Browser”)
-search_q = st.text_input(“🔍 Filter by team name:”, placeholder=“e.g. Arsenal, Milan, PSG”)
-
-```
-filtered = [
-    m for m in weekly
-    if not search_q
-    or search_q.lower() in m.get("match_hometeam_name","").lower()
-    or search_q.lower() in m.get("match_awayteam_name","").lower()
-]
-
-if not filtered:
-    st.info("No fixtures found for that search.")
-else:
-    dates = sorted(set(m.get("match_date","") for m in filtered))
-    for d in dates:
-        st.markdown(f"#### 📅 {d}")
-        day_matches = [m for m in filtered if m.get("match_date") == d]
-        for m in day_matches:
-            with st.expander(f"🕒 {m.get('match_time','')} | {m.get('match_hometeam_name','')} vs {m.get('match_awayteam_name','')}"):
-                h_st, h_n = fetch_team_stats(m.get("match_hometeam_id"), "home")
-                a_st, a_n = fetch_team_stats(m.get("match_awayteam_id"), "away")
-                if h_st and a_st:
-                    plays = generate_pick(h_st, a_st, m.get("league_name",""))
-                    if plays:
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            for pk, _, _, conf in plays[:3]:
-                                st.markdown(f"<div style='background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:10px;margin-bottom:6px;'>"
-                                            f"<div style='color:#f97316;font-weight:700;font-size:13px;'>{pk}</div>"
-                                            f"<div style='color:#22c55e;font-size:11px;margin-top:4px;'>{conf}% edge</div>"
-                                            f"<div class='conf-bar-bg'><div class='conf-bar-fill' style='width:{conf}%;'></div></div></div>",
-                                            unsafe_allow_html=True)
-                        with c2:
-                            pg  = ((h_st['gf']+a_st['ga'])/2)+((a_st['gf']+h_st['ga'])/2)
-                            pc  = ((h_st['cf']+a_st['ca'])/2)+((a_st['cf']+h_st['ca'])/2)
-                            pcd = h_st['cards']+a_st['cards']
-                            st.markdown(f"""<div class='stat-box'>
-                                <div style='color:#f97316;font-size:10px;font-weight:700;margin-bottom:8px;letter-spacing:1px;'>PROJECTIONS</div>
-                                <div class='stat-row'><span class='stat-label'>xGoals</span><span class='stat-val'>{pg:.2f}</span></div>
-                                <div class='stat-row'><span class='stat-label'>xCorners</span><span class='stat-val'>{pc:.1f}</span></div>
-                                <div class='stat-row'><span class='stat-label'>xCards</span><span class='stat-val'>{pcd:.1f}</span></div>
-                                <div class='stat-row'><span class='stat-label'>Home sample</span><span class='stat-val'>{h_n} games</span></div>
-                                <div class='stat-row'><span class='stat-label'>Away sample</span><span class='stat-val'>{a_n} games</span></div>
-                            </div>""", unsafe_allow_html=True)
-                    else:
-                        st.markdown("<div class='no-play'>No qualifying edge found for this match.</div>", unsafe_allow_html=True)
-                else:
-                    st.markdown("<div class='no-play'>Insufficient data for this match.</div>", unsafe_allow_html=True)
-```
-
-# ════════════════════════════════════════════
-
-# TAB 3 — DAILY PICKS
-
-# ════════════════════════════════════════════
-
-with tab3:
-st.markdown(”### 🔥 All System Picks Today”)
-
-```
-if not daily:
-    st.info("No top-league fixtures found for today.")
-else:
-    leagues = sorted(set(m.get("league_name","") for m in daily))
-    for league in leagues:
-        st.markdown(f"<div class='league-bar'>🏆 {league}</div>", unsafe_allow_html=True)
-        for m in [g for g in daily if g.get("league_name") == league]:
-            status   = m.get("match_status","")
-            is_live  = match_is_live(status)
-            label    = f"{'🔴 LIVE ' if is_live else ''}🕒 {m.get('match_time','')} | {m.get('match_hometeam_name','')} vs {m.get('match_awayteam_name','')}"
-
-            with st.expander(label):
-                if is_live:
-                    st.markdown(f"<div class='live-banner'><span class='live-dot'></span> LIVE: {m.get('match_hometeam_score','-')} – {m.get('match_awayteam_score','-')} &nbsp;({status}')</div>", unsafe_allow_html=True)
-
-                h_st, h_n = fetch_team_stats(m.get("match_hometeam_id"), "home")
-                a_st, a_n = fetch_team_stats(m.get("match_awayteam_id"), "away")
-
-                if not (h_st and a_st):
-                    st.caption("⚠️ Insufficient historical data for this fixture.")
-                    continue
-
-                plays = generate_pick(h_st, a_st, league)
-                pk_label, _, _, pk_conf = plays[0] if plays else ("⚠️ NO PLAY","none",0,0)
-
-                ref     = m.get("match_referee","")
-                ref_url = f"https://www.google.com/search?q={ref.replace(' ','+')}+referee+stats"
-                ref_html= f"<a href='{ref_url}' target='_blank' class='ref-tag'>⚖️ {ref}</a>" if ref else "<span class='ref-tag' style='opacity:0.5;'>⚖️ Referee TBD</span>"
-
-                c1, c2 = st.columns([3, 1.5])
-                with c1:
-                    bar_w = min(pk_conf, 99) if pk_conf else 0
-                    st.markdown(f"""
-                    <div class='pick-card'>
-                      <div class='pick-label'>{pk_label}</div>
-                      <div style='color:#4ade80;font-size:13px;margin-top:6px;'>{f'{pk_conf}% confidence' if pk_conf else ''}</div>
-                      <div class='conf-bar-bg' style='margin-top:8px;'><div class='conf-bar-fill' style='width:{bar_w}%;'></div></div>
-                      <div style='margin-top:12px;'>{ref_html}</div>
-                      {'<div style="color:#475569;font-size:11px;margin-top:6px;">🟡 Low sample — treat with caution</div>' if min(h_n,a_n)<3 else ''}
-                    </div>""", unsafe_allow_html=True)
-
-                    if len(plays) > 1:
-                        st.markdown("<div style='margin-top:10px;color:#475569;font-size:11px;font-weight:700;letter-spacing:1px;'>OTHER EDGES</div>", unsafe_allow_html=True)
-                        for pl,_,_,cf in plays[1:3]:
-                            st.markdown(f"<div style='font-size:12px;color:#64748b;padding:4px 0;'>{pl} &nbsp; <span style='color:#22c55e;'>{cf}%</span></div>", unsafe_allow_html=True)
-
-                with c2:
-                    pg  = ((h_st['gf']+a_st['ga'])/2)+((a_st['gf']+h_st['ga'])/2)
-                    pc  = ((h_st['cf']+a_st['ca'])/2)+((a_st['cf']+h_st['ca'])/2)
-                    pcd = h_st['cards']+a_st['cards']
-                    pst = h_st['sotf']+a_st['sotf']
-                    st.markdown(f"""<div class='stat-box'>
-                        <div style='color:#f97316;font-size:10px;font-weight:700;margin-bottom:10px;letter-spacing:2px;'>MATH EDGE</div>
-                        <div class='stat-row'><span class='stat-label'>xGoals</span>   <span class='stat-val'>{pg:.2f}</span></div>
-                        <div class='stat-row'><span class='stat-label'>xCorners</span> <span class='stat-val'>{pc:.1f}</span></div>
-                        <div class='stat-row'><span class='stat-label'>xCards</span>   <span class='stat-val'>{pcd:.1f}</span></div>
-                        <div class='stat-row'><span class='stat-label'>xSOT</span>     <span class='stat-val'>{pst:.1f}</span></div>
-                        <div class='stat-row'><span class='stat-label'>H sample</span> <span class='stat-val'>{h_n}g</span></div>
-                        <div class='stat-row'><span class='stat-label'>A sample</span> <span class='stat-val'>{a_n}g</span></div>
-                    </div>""", unsafe_allow_html=True)
-```
-
-# ════════════════════════════════════════════
-
-# TAB 4 — ACCURACY
-
-# ════════════════════════════════════════════
-
-with tab4:
-st.markdown(”### 📊 Yesterday’s System Accuracy”)
-st.caption(f”Results for {yest_str} — all markets evaluated (goals, corners, cards, SOT)”)
-
-```
-finished = [m for m in yest if m.get("match_status","").lower() == "finished"]
-
-if not finished:
-    st.info("No finished top-league matches found for yesterday.")
-else:
-    wins = losses = no_data = unverifiable = 0
-    results = []
-
-    for m in finished:
-        h_st, _ = fetch_team_stats(m.get("match_hometeam_id"), "home")
-        a_st, _ = fetch_team_stats(m.get("match_awayteam_id"), "away")
-        if not (h_st and a_st):
-            no_data += 1
-            continue
-
-        pk_label, p_type, thresh, conf = top_pick(h_st, a_st, m.get("league_name",""))
-        if conf == 0:
-            continue
-
-        outcome = check_result(p_type, thresh, m)
-        match_str = f"{m.get('match_hometeam_name','')} vs {m.get('match_awayteam_name','')}"
-        score_str = f"{m.get('match_hometeam_score','-')} – {m.get('match_awayteam_score','-')}"
-
-        if outcome is True:
-            wins += 1
-            results.append(("✅", match_str, pk_label, score_str, conf))
-        elif outcome is False:
-            losses += 1
-            results.append(("❌", match_str, pk_label, score_str, conf))
-        else:
-            unverifiable += 1
-            results.append(("❓", match_str, pk_label, score_str, conf))
-
-    total_verifiable = wins + losses
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("✅ Wins",  wins)
-    m2.metric("❌ Losses", losses)
-    m3.metric("Win Rate", f"{(wins/total_verifiable*100):.1f}%" if total_verifiable else "—")
-    m4.metric("❓ No data", unverifiable)
+    live_refresh = st.toggle("🔴 Live Auto-Refresh (60s)", value=False)
+    if live_refresh:
+        st.success("🟢 LIVE MODE ACTIVE")
 
     st.divider()
-    for icon, match_s, pick_s, score_s, conf in results:
-        st.markdown(f"""
-        <div class='acc-row'>
-          <div>
-            <div class='acc-match'>{icon} {match_s} <span style='color:#475569;font-size:11px;'>({score_s})</span></div>
-            <div class='acc-pick'>{pick_s} &nbsp;·&nbsp; {conf}% predicted confidence</div>
-          </div>
-        </div>""", unsafe_allow_html=True)
-```
+    st.markdown("<div style='font-size:11px; color:#334155;'>⚠️ For research only. Not financial advice.</div>", unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────
+#  HEADER
+# ─────────────────────────────────────────
+st.markdown("<div class='page-title'>🏦 Institutional Quant Radar</div>", unsafe_allow_html=True)
+st.markdown("<div class='page-sub'>ALGORITHMIC EDGE · VERIFIED LEAGUES ONLY · REAL-TIME STATS</div>", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────
+#  LOAD DATA ONCE
+# ─────────────────────────────────────────
+with st.spinner("Fetching fixtures…"):
+    daily_matches  = fetch_events(today_str, today_str)
+    weekly_matches = fetch_events(today_str, week_out_str)
+
+
+# ─────────────────────────────────────────
+#  QUICK STATS BAR
+# ─────────────────────────────────────────
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Today's Fixtures", len(daily_matches))
+c2.metric("This Week",        len(weekly_matches))
+live_now = [m for m in daily_matches if is_live_status(m.get("match_status",""))]
+c3.metric("🔴 Live Now",      len(live_now))
+leagues_today = len(set(m.get("league_name") for m in daily_matches))
+c4.metric("Leagues",          leagues_today)
+st.write("")
+
+
+# ─────────────────────────────────────────
+#  TABS
+# ─────────────────────────────────────────
+tab1, tab2, tab3, tab4 = st.tabs(["🎟️ Auto-Acca", "📝 Weekly Slip", "🔥 Daily Picks", "📊 Accuracy"])
+
+
+# ══════════════════════════════════════════
+#  TAB 1 — AUTO ACCA
+# ══════════════════════════════════════════
+with tab1:
+    st.markdown("### 🎟️ Algorithmic Ticket Generator")
+    st.markdown("<div class='info-box'>Pick a target odds tier. The system selects the highest-edge plays across all today's verified fixtures.</div>", unsafe_allow_html=True)
+
+    # initialise session state
+    if "acca_selection" not in st.session_state:
+        st.session_state.acca_selection = None
+
+    cols_r1 = st.columns(4)
+    cols_r2 = st.columns(4)
+    all_cols = cols_r1 + cols_r2
+
+    for i, (n, label, color, icon) in enumerate(TIER_CONFIG):
+        with all_cols[i]:
+            if st.button(f"{icon} {ODDS_LABELS[i]}", key=f"tier_{i}", use_container_width=True):
+                st.session_state.acca_selection = (n, label, color)
+
+    sel = st.session_state.acca_selection
+    if sel:
+        n_picks, label, color = sel
+        st.markdown(f"<div class='risk-badge' style='background:{color};'>{label} · {n_picks} LEG ACCA</div>", unsafe_allow_html=True)
+
+        valid_picks = []
+        with st.spinner(f"Building {n_picks}-leg acca…"):
+            for m in daily_matches:
+                h_st, h_cnt = fetch_stats(m.get("match_hometeam_id"), "home")
+                a_st, a_cnt = fetch_stats(m.get("match_awayteam_id"), "away")
+                if h_st and a_st and h_cnt >= 2 and a_cnt >= 2:
+                    pick, p_type, line, conf = generate_ai_pick(h_st, a_st, m.get("league_name",""))
+                    if conf > 0:
+                        valid_picks.append({
+                            "match":  f"{m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}",
+                            "league": m.get("league_name",""),
+                            "pick":   pick,
+                            "conf":   conf,
+                            "time":   m.get("match_time",""),
+                        })
+
+        valid_picks.sort(key=lambda x: x["conf"], reverse=True)
+        chosen = valid_picks[:n_picks]
+
+        if not chosen:
+            st.markdown("<div class='empty-state'><div class='empty-state-icon'>📭</div><div class='empty-state-text'>No qualifying picks today</div><div class='empty-state-sub'>Try refreshing the cache or check back later</div></div>", unsafe_allow_html=True)
+        else:
+            avg_conf = sum(p["conf"] for p in chosen) / len(chosen)
+            m1, m2 = st.columns(2)
+            m1.metric("Legs Found",    len(chosen))
+            m2.metric("Avg Confidence", f"{avg_conf:.1f}%")
+
+            st.markdown("<div class='slip-box'>", unsafe_allow_html=True)
+            for i, p in enumerate(chosen, 1):
+                st.markdown(f"""
+                <div class='slip-row'>
+                    <div class='slip-league'>{i}. {p['league']} · {p['time']}</div>
+                    <div class='slip-match'>{p['match']}</div>
+                    <div class='slip-pick' style='color:{color};'>{p['pick']}</div>
+                    {conf_bar_html(p['conf'], color)}
+                </div>""", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════
+#  TAB 2 — WEEKLY SLIP
+# ══════════════════════════════════════════
+with tab2:
+    st.markdown("### 📝 Weekly Fixture Browser")
+    search_q = st.text_input("🔍 Search team", placeholder="e.g. Chelsea, Milan, PSG…")
+
+    if search_q:
+        filtered = [m for m in weekly_matches
+                    if search_q.lower() in m.get("match_hometeam_name","").lower()
+                    or search_q.lower() in m.get("match_awayteam_name","").lower()]
+    else:
+        filtered = weekly_matches
+
+    if not filtered:
+        st.markdown("<div class='empty-state'><div class='empty-state-icon'>🔍</div><div class='empty-state-text'>No fixtures found</div><div class='empty-state-sub'>Try a different search term</div></div>", unsafe_allow_html=True)
+    else:
+        dates = sorted(set(m.get("match_date","") for m in filtered))
+        for d in dates:
+            day_matches = [m for m in filtered if m.get("match_date") == d]
+            st.markdown(f"#### 📅 {d} &nbsp;<span style='color:#475569; font-size:13px;'>({len(day_matches)} matches)</span>", unsafe_allow_html=True)
+            for m in day_matches:
+                home = m.get("match_hometeam_name","")
+                away = m.get("match_awayteam_name","")
+                league = m.get("league_name","")
+                t = m.get("match_time","")
+                st.checkbox(
+                    f"🕒 {t} | **{home}** vs **{away}** · _{league}_",
+                    key=f"w_{m.get('match_id')}"
+                )
+
+
+# ══════════════════════════════════════════
+#  TAB 3 — DAILY PICKS
+# ══════════════════════════════════════════
+with tab3:
+    st.markdown("### 🔥 All System Picks Today")
+
+    if not daily_matches:
+        st.markdown("<div class='empty-state'><div class='empty-state-icon'>📭</div><div class='empty-state-text'>No fixtures today</div><div class='empty-state-sub'>Check back later or refresh the cache</div></div>", unsafe_allow_html=True)
+    else:
+        leagues = sorted(set(m.get("league_name","") for m in daily_matches))
+        for l_name in leagues:
+            st.markdown(f"<div class='league-header'>🏆 {l_name}</div>", unsafe_allow_html=True)
+            for m in [g for g in daily_matches if g.get("league_name") == l_name]:
+                status  = m.get("match_status","")
+                live    = is_live_status(status)
+                home    = m.get("match_hometeam_name","?")
+                away    = m.get("match_awayteam_name","?")
+                t       = m.get("match_time","")
+                prefix  = "🔴 LIVE · " if live else ""
+                label   = f"{prefix}🕒 {t} | {home} vs {away}"
+
+                with st.expander(label):
+                    if live:
+                        hs = m.get("match_hometeam_score","?")
+                        as_ = m.get("match_awayteam_score","?")
+                        st.markdown(f"<div class='live-banner'><span class='live-dot'></span>LIVE SCORE: {hs} – {as_} &nbsp;({status}')</div>", unsafe_allow_html=True)
+
+                    with st.spinner("Fetching stats…"):
+                        h_st, h_cnt = fetch_stats(m.get("match_hometeam_id"), "home")
+                        a_st, a_cnt = fetch_stats(m.get("match_awayteam_id"), "away")
+
+                    if not h_st or not a_st:
+                        st.warning("⚠️ Insufficient data for this match.")
+                        continue
+
+                    if h_cnt < 2 or a_cnt < 2:
+                        st.info(f"📉 Limited sample: {home} ({h_cnt} games) / {away} ({a_cnt} games). Treat with caution.")
+
+                    pick, p_type, thresh, conf = generate_ai_pick(h_st, a_st, l_name)
+                    ref = m.get("match_referee","")
+                    ref_html = (f"<a href='https://www.google.com/search?q={ref.replace(' ','+')}+referee+stats'"
+                                f" target='_blank' class='ref-tag'>⚖️ {ref}</a>") if ref else "<span class='ref-tag'>⚖️ Referee TBD</span>"
+
+                    c1, c2 = st.columns([3, 1.5])
+                    with c1:
+                        st.markdown(f"""
+                        <div class='pick-card'>
+                            <div class='pick-label'>{pick}</div>
+                            {ref_html}
+                            {conf_bar_html(conf)}
+                        </div>""", unsafe_allow_html=True)
+
+                    with c2:
+                        pg  = ((h_st['gf']+a_st['ga'])/2) + ((a_st['gf']+h_st['ga'])/2)
+                        pc  = ((h_st['cf']+a_st['ca'])/2) + ((a_st['cf']+h_st['ca'])/2)
+                        pcd = h_st['cards'] + a_st['cards']
+                        psot= h_st['sotf'] + a_st['sotf']
+                        st.markdown(f"""
+                        <div class='stats-panel'>
+                            <div class='stats-title'>Math Edge</div>
+                            <div class='stat-row'><span>xG (proj)</span><span class='stat-val'>{pg:.2f}</span></div>
+                            <div class='stat-row'><span>Corners</span><span class='stat-val'>{pc:.1f}</span></div>
+                            <div class='stat-row'><span>Yellow Cards</span><span class='stat-val'>{pcd:.1f}</span></div>
+                            <div class='stat-row'><span>SOT</span><span class='stat-val'>{psot:.1f}</span></div>
+                            <div class='stat-row'><span>Home games</span><span class='stat-val'>{h_cnt}</span></div>
+                            <div class='stat-row'><span>Away games</span><span class='stat-val'>{a_cnt}</span></div>
+                        </div>""", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════
+#  TAB 4 — ACCURACY
+# ══════════════════════════════════════════
+with tab4:
+    st.markdown("### 📊 Yesterday's System Accuracy")
+    st.markdown(f"<div style='color:#475569; font-size:13px; margin-bottom:16px;'>📅 Results for {yesterday_str}</div>", unsafe_allow_html=True)
+
+    with st.spinner("Fetching yesterday's results…"):
+        yesterday_res = fetch_events(yesterday_str, yesterday_str)
+
+    finished = [m for m in yesterday_res if m.get("match_status") == "Finished"]
+
+    if not finished:
+        st.markdown("<div class='empty-state'><div class='empty-state-icon'>📭</div><div class='empty-state-text'>No finished matches found for yesterday</div></div>", unsafe_allow_html=True)
+    else:
+        results_by_type = {}
+        wins = losses = skipped = 0
+
+        with st.spinner("Back-testing picks…"):
+            for m in finished:
+                h_st, _ = fetch_stats(m.get("match_hometeam_id"), "home")
+                a_st, _ = fetch_stats(m.get("match_awayteam_id"), "away")
+                if not h_st or not a_st:
+                    continue
+
+                pick, p_type, thresh, conf = generate_ai_pick(h_st, a_st, m.get("league_name",""))
+                if conf == 0 or p_type == "pass":
+                    continue
+
+                won = check_result(p_type, thresh, m)
+                if won is None:
+                    skipped += 1
+                    continue
+
+                label = pick.split(" ", 1)[-1] if " " in pick else pick  # strip emoji
+                results_by_type.setdefault(p_type, {"w":0,"l":0})
+                if won:
+                    wins += 1
+                    results_by_type[p_type]["w"] += 1
+                else:
+                    losses += 1
+                    results_by_type[p_type]["l"] += 1
+
+                total_for_row = wins + losses
+                home = m.get("match_hometeam_name","")
+                away = m.get("match_awayteam_name","")
+                hs   = m.get("match_hometeam_score","?")
+                as_  = m.get("match_awayteam_score","?")
+                cls  = "acc-win" if won else "acc-loss"
+                ico  = "✅" if won else "❌"
+                st.markdown(f"""
+                <div class='accuracy-row {cls}'>
+                    <span style='font-size:18px;'>{ico}</span>
+                    <div style='flex:1;'>
+                        <div style='font-weight:600; font-size:13px;'>{home} vs {away}</div>
+                        <div style='font-size:11px; color:#64748b;'>FT: {hs}–{as_}</div>
+                    </div>
+                    <div style='text-align:right;'>
+                        <div style='font-family:DM Mono,monospace; font-size:12px; color:#e2e8f0;'>{pick}</div>
+                        <div style='font-size:11px; color:#475569;'>{conf:.0f}% conf</div>
+                    </div>
+                </div>""", unsafe_allow_html=True)
+
+        st.write("")
+        total = wins + losses
+        if total > 0:
+            wr = wins / total * 100
+            st.divider()
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            mc1.metric("Win Rate",  f"{wr:.1f}%",  delta=f"+{wins}W")
+            mc2.metric("Picks",     total)
+            mc3.metric("Wins",      wins)
+            mc4.metric("Losses",    losses)
+
+            # Per-type breakdown
+            if results_by_type:
+                st.markdown("#### Market Breakdown")
+                for pt, rec in results_by_type.items():
+                    t = rec['w'] + rec['l']
+                    pct = rec['w']/t*100 if t else 0
+                    st.markdown(
+                        f"**{pt.replace('_',' ').title()}** — "
+                        f"{'✅'*rec['w']}{'❌'*rec['l']} "
+                        f"({pct:.0f}% from {t})"
+                    )
+
+
+# ─────────────────────────────────────────
+#  LIVE AUTO-REFRESH
+# ─────────────────────────────────────────
+if live_refresh:
+    time.sleep(60)
+    st.rerun()
