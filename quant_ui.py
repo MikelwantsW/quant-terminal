@@ -83,6 +83,7 @@ section[data-testid="stSidebar"] { background-color: #0d1520 !important; border-
 API_KEY       = st.secrets.get("APIFOOTBALL_KEY", "4ca129dfac12e50067e9a115f4d50328619188357f590208bcbacba23789307a")
 now           = datetime.utcnow() + timedelta(hours=1)
 today_str     = now.strftime('%Y-%m-%d')
+tomorrow_str  = (now + timedelta(days=1)).strftime('%Y-%m-%d')
 yesterday_str = (now - timedelta(days=1)).strftime('%Y-%m-%d')
 week_out_str  = (now + timedelta(days=7)).strftime('%Y-%m-%d')
 past_str      = (now - timedelta(days=120)).strftime('%Y-%m-%d')
@@ -91,8 +92,18 @@ FINISHED_STATUSES = {"Finished","FT","AET","PEN","Awarded","Cancelled","Postpone
 LIVE_STATUSES     = {"1H","HT","2H","ET","P","LIVE","Break"}
 
 SPORTSBOOK_TIER_A = {
+    # Exact names
     "Premier League","Serie A","La Liga","Bundesliga","Ligue 1",
     "UEFA Champions League","UEFA Europa League","UEFA Europa Conference League","Championship",
+    # API variant names (apifootball.com sometimes returns these)
+    "France Ligue 1","Ligue 1 Uber Eats","Ligue 1 McDonald's",
+    "Spanish La Liga","Spain La Liga","Primera Division",
+    "German Bundesliga","Germany Bundesliga","1. Bundesliga",
+    "Italian Serie A","Italy Serie A",
+    "English Premier League","England Premier League",
+    "English Championship","England Championship",
+    "Champions League","Europa League","Conference League",
+    "UEFA CL","UEFA EL",
 }
 SPORTSBOOK_TIER_B = {
     "Eredivisie","Primeira Liga","Süper Lig","Scottish Premiership","Scottish Premier League",
@@ -100,6 +111,17 @@ SPORTSBOOK_TIER_B = {
     "Austrian Football Bundesliga","Austrian Bundesliga",
     "Allsvenskan","Eliteserien","Superliga","Major League Soccer",
     "Brasileirao Serie A","Argentine Primera División",
+    # API variants
+    "Dutch Eredivisie","Netherlands Eredivisie",
+    "Portuguese Primeira Liga","Portugal Primeira Liga","Primeira Liga Portugal",
+    "Turkish Süper Lig","Turkey Süper Lig","Super Lig",
+    "Scotland Premiership","Scotland Premier League",
+    "Belgium First Division A","Belgium Pro League",
+    "Austria Bundesliga","Austrian Bundesliga",
+    "Sweden Allsvenskan","Norway Eliteserien","Denmark Superliga",
+    "USA MLS","MLS","American MLS",
+    "Brazil Serie A","Brazilian Serie A","Brasileirão",
+    "Argentina Primera Division","Argentine Primera Division",
 }
 SPORTSBOOK_TIER_C = {
     "Veikkausliiga","SuperLiga","Serbian SuperLiga","Greek Super League",
@@ -107,6 +129,53 @@ SPORTSBOOK_TIER_C = {
     "Saudi Professional League","J1 League",
 }
 TOP_LEAGUES = SPORTSBOOK_TIER_A | SPORTSBOOK_TIER_B | SPORTSBOOK_TIER_C
+
+# Fuzzy league matcher — handles API name drift without hard-coding every variant
+_FUZZY_MAP = {
+    # keywords → canonical name
+    "ligue 1":          "Ligue 1",
+    "premier league":   "Premier League",
+    "la liga":          "La Liga",
+    "primera division": "La Liga",
+    "serie a":          "Serie A",
+    "bundesliga":       "Bundesliga",
+    "champions league": "UEFA Champions League",
+    "europa league":    "UEFA Europa League",
+    "conference league":"UEFA Europa Conference League",
+    "championship":     "Championship",
+    "eredivisie":       "Eredivisie",
+    "primeira liga":    "Primeira Liga",
+    "süper lig":        "Süper Lig",
+    "super lig":        "Süper Lig",
+    "scottish":         "Scottish Premiership",
+    "allsvenskan":      "Allsvenskan",
+    "eliteserien":      "Eliteserien",
+    "superliga":        "Superliga",
+    "mls":              "Major League Soccer",
+    "brasileirao":      "Brasileirao Serie A",
+    "brazil serie a":   "Brasileirao Serie A",
+    "argentina":        "Argentine Primera División",
+    "veikkausliiga":    "Veikkausliiga",
+    "serbian":          "Serbian SuperLiga",
+    "greek":            "Greek Super League",
+    "czech":            "Czech First League",
+    "ekstraklasa":      "Polish Ekstraklasa",
+    "saudi":            "Saudi Pro League",
+    "j1 league":        "J1 League",
+    "belgian":          "Belgian Pro League",
+    "swiss":            "Swiss Super League",
+    "austrian":         "Austrian Football Bundesliga",
+}
+
+def canonical_league(name: str) -> str:
+    """Return the canonical league name, handling API naming variations."""
+    if name in TOP_LEAGUES:
+        return name          # exact match — fast path
+    low = name.lower()
+    for keyword, canonical in _FUZZY_MAP.items():
+        if keyword in low:
+            return canonical
+    return name              # unknown — return as-is (will be filtered out)
 
 LEAGUE_PROFILE = {
     "La Liga":(0.90,0.85,1.05,0.0),"Serie A":(0.88,0.92,1.10,0.0),
@@ -335,7 +404,14 @@ def fetch_events(date_from,date_to):
     try:
         res=requests.get(url,timeout=15).json()
         if isinstance(res,list):
-            return [m for m in res if m.get("league_name") in TOP_LEAGUES]
+            out = []
+            for m in res:
+                raw_lg = m.get("league_name","")
+                canon  = canonical_league(raw_lg)
+                if canon in TOP_LEAGUES:
+                    m["league_name"] = canon   # normalise in-place
+                    out.append(m)
+            return out
         return []
     except: return []
 
@@ -492,20 +568,23 @@ st.markdown(f"<div class='page-sub'>ALGORITHMIC EDGE · {len(ACTIVE_LEAGUES)} LE
 
 # ── LOAD DATA ─────────────────────────────────────────────────────────────────
 with st.spinner("Fetching fixtures…"):
-    raw_daily =fetch_events(today_str,today_str)
-    raw_weekly=fetch_events(today_str,week_out_str)
+    raw_daily    = fetch_events(today_str,    today_str)
+    raw_tomorrow = fetch_events(tomorrow_str,  tomorrow_str)
+    raw_weekly   = fetch_events(today_str,     week_out_str)
 
-daily_matches  =[m for m in raw_daily  if m.get("league_name") in ACTIVE_LEAGUES and is_upcoming(m)]
-daily_live     =[m for m in raw_daily  if m.get("league_name") in ACTIVE_LEAGUES and is_live_status(m.get("match_status",""))]
-daily_finished =[m for m in raw_daily  if m.get("league_name") in ACTIVE_LEAGUES and is_finished(m.get("match_status",""))]
-weekly_matches =[m for m in raw_weekly if m.get("league_name") in ACTIVE_LEAGUES and is_upcoming(m)]
+daily_matches    = [m for m in raw_daily    if m.get("league_name") in ACTIVE_LEAGUES and is_upcoming(m)]
+daily_live       = [m for m in raw_daily    if m.get("league_name") in ACTIVE_LEAGUES and is_live_status(m.get("match_status",""))]
+daily_finished   = [m for m in raw_daily    if m.get("league_name") in ACTIVE_LEAGUES and is_finished(m.get("match_status",""))]
+tomorrow_matches = [m for m in raw_tomorrow if m.get("league_name") in ACTIVE_LEAGUES and is_upcoming(m)]
+weekly_matches   = [m for m in raw_weekly   if m.get("league_name") in ACTIVE_LEAGUES and is_upcoming(m)]
 
 # ── QUICK STATS ───────────────────────────────────────────────────────────────
-c1,c2,c3,c4=st.columns(4)
-c1.metric("Upcoming Today",len(daily_matches))
-c2.metric("🔴 Live Now",len(daily_live))
-c3.metric("✅ Finished",len(daily_finished))
-c4.metric("This Week",len(weekly_matches))
+c1,c2,c3,c4,c5=st.columns(5)
+c1.metric("⏳ Today",       len(daily_matches))
+c2.metric("📅 Tomorrow",    len(tomorrow_matches))
+c3.metric("🔴 Live Now",    len(daily_live))
+c4.metric("✅ Finished",    len(daily_finished))
+c5.metric("📆 This Week",   len(weekly_matches))
 st.write("")
 
 # ── TABS ──────────────────────────────────────────────────────────────────────
@@ -571,8 +650,11 @@ with tab2:
 # ══ TAB 3 ═════════════════════════════════════════════════════════════════════
 with tab3:
     st.markdown("### 🔥 Today's System Picks")
-    view_mode=st.radio("Show",["⏳ Upcoming only","🔴 Live now","✅ Finished today"],horizontal=True,index=0)
-    show_matches=daily_matches if view_mode=="⏳ Upcoming only" else daily_live if view_mode=="🔴 Live now" else daily_finished
+    view_mode=st.radio("Show",["⏳ Today (Upcoming)","📅 Tomorrow","🔴 Live Now","✅ Finished"],horizontal=True,index=0)
+    if view_mode=="⏳ Today (Upcoming)":    show_matches=daily_matches
+    elif view_mode=="📅 Tomorrow":          show_matches=tomorrow_matches
+    elif view_mode=="🔴 Live Now":          show_matches=daily_live
+    else:                                   show_matches=daily_finished
     if sniper_mode: st.markdown("<div class='warning-box'>🎯 Sniper Mode — only picks ≥82% confidence shown.</div>",unsafe_allow_html=True)
     if not show_matches:
         st.markdown("<div class='empty-state'><div class='empty-state-icon'>📭</div><div class='empty-state-text'>No matches in this category right now</div></div>",unsafe_allow_html=True)
