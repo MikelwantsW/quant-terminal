@@ -129,6 +129,136 @@ LEAGUE_PROFILE = {
 }
 DEFAULT_PROFILE = (1.0,1.0,1.0,2.0)
 
+# ── LEAGUE PRESTIGE RANKING ───────────────────────────────────────────────────
+# Lower number = shown first. Used to sort leagues before displaying matches.
+LEAGUE_PRESTIGE = {
+    # Tier 1 — global showpiece
+    "UEFA Champions League":            1,
+    "UEFA Europa League":               2,
+    "UEFA Europa Conference League":    3,
+    # Tier 2 — Big Five
+    "Premier League":                   10,
+    "La Liga":                          11,
+    "Bundesliga":                       12,
+    "Serie A":                          13,
+    "Ligue 1":                          14,
+    # Tier 3 — Strong domestic
+    "Championship":                     20,
+    "Eredivisie":                       21,
+    "Primeira Liga":                    22,
+    "Süper Lig":                        23,
+    "Scottish Premiership":             24,
+    "Scottish Premier League":          24,
+    "Belgian Pro League":               25,
+    "Belgian First Division A":         25,
+    "Austrian Football Bundesliga":     26,
+    "Austrian Bundesliga":              26,
+    "Swiss Super League":               27,
+    # Tier 4 — Nordic / Americas
+    "Allsvenskan":                      30,
+    "Eliteserien":                      31,
+    "Superliga":                        32,
+    "Major League Soccer":              33,
+    "Brasileirao Serie A":              34,
+    "Argentine Primera División":       35,
+    # Tier 5 — Rest
+    "Veikkausliiga":                    40,
+    "SuperLiga":                        41,
+    "Serbian SuperLiga":                41,
+    "Greek Super League":               42,
+    "Czech First League":               43,
+    "Polish Ekstraklasa":               44,
+    "Saudi Pro League":                 45,
+    "Saudi Professional League":        45,
+    "J1 League":                        46,
+}
+
+# Known heavyweight clubs — boosts a match's importance score
+ELITE_CLUBS = {
+    # European giants
+    "Real Madrid","Barcelona","Bayern Munich","Manchester City","Liverpool",
+    "Chelsea","Arsenal","Manchester United","Tottenham","Newcastle",
+    "Inter Milan","AC Milan","Juventus","Napoli","Roma","Lazio",
+    "PSG","Marseille","Lyon","Borussia Dortmund","Bayer Leverkusen",
+    "RB Leipzig","Atletico Madrid","Sevilla","Valencia","Athletic Bilbao",
+    "Porto","Benfica","Sporting CP","Galatasaray","Fenerbahce","Besiktas",
+    "Ajax","PSV","Feyenoord","Anderlecht","Club Brugge",
+    # Americas
+    "Flamengo","Palmeiras","Boca Juniors","River Plate",
+}
+
+# Derby / rivalry keyword pairs — any match containing both words gets a big boost
+DERBY_KEYWORDS = [
+    ("manchester","city"),("manchester","united"),
+    ("real","barcelona"),("inter","milan"),("ac milan","inter"),
+    ("juventus","napoli"),("liverpool","everton"),
+    ("arsenal","tottenham"),("celtic","rangers"),
+    ("boca","river"),("flamengo","fluminense"),
+    ("ajax","psv"),("dortmund","schalke"),("dortmund","leverkusen"),
+    ("atletico","real"),("roma","lazio"),
+]
+
+def match_importance(m: dict) -> float:
+    """
+    Returns a score (higher = more important). Used to sort matches
+    within a league so the most interesting games appear first.
+    Components:
+      - League prestige base (inverted so lower prestige rank = higher score)
+      - Elite club bonus (+15 per elite team involved)
+      - Derby/rivalry bonus (+25)
+      - Kickoff time (earlier today = higher, so today's early games stay at top)
+    """
+    league = m.get("league_name","")
+    home   = m.get("match_hometeam_name","")
+    away   = m.get("match_awayteam_name","")
+
+    # Base: invert prestige so rank 1 = score 100, rank 46 = score ~55
+    prestige_rank = LEAGUE_PRESTIGE.get(league, 50)
+    score = 100 - prestige_rank
+
+    # Elite club bonus
+    for club in ELITE_CLUBS:
+        if club.lower() in home.lower(): score += 15
+        if club.lower() in away.lower(): score += 15
+
+    # Derby bonus
+    combined = (home + " " + away).lower()
+    for w1, w2 in DERBY_KEYWORDS:
+        if w1 in combined and w2 in combined:
+            score += 25
+            break
+
+    # Time bonus — earlier kick-off gets a slight boost so games sort naturally
+    try:
+        t = m.get("match_time","23:59")
+        h, mn = int(t.split(":")[0]), int(t.split(":")[1])
+        score += max(0, 10 - (h * 60 + mn) // 60)
+    except: pass
+
+    return score
+
+
+def sort_matches(matches: list) -> list:
+    """Sort a list of matches: most important first."""
+    return sorted(matches, key=match_importance, reverse=True)
+
+
+def sort_leagues_and_matches(matches: list) -> list[tuple[str, list]]:
+    """
+    Returns [(league_name, [sorted_matches]), ...] ordered by prestige.
+    Within each league, matches are sorted by importance score.
+    """
+    league_order = sorted(
+        set(m.get("league_name","") for m in matches),
+        key=lambda lg: LEAGUE_PRESTIGE.get(lg, 99)
+    )
+    result = []
+    for lg in league_order:
+        lg_matches = [m for m in matches if m.get("league_name","") == lg]
+        result.append((lg, sort_matches(lg_matches)))
+    return result
+
+
 TIER_CONFIG  = [(2,"SAFE DOUBLE","#16a34a","🟢"),(4,"MODERATE","#eab308","🟡"),(6,"AGGRESSIVE","#f97316","🟠"),(8,"SYSTEM ACCA","#dc2626","🔴"),(12,"WHALE TIER","#9333ea","🟣"),(15,"QUANT JACKPOT","#2563eb","🔵"),(18,"THE GAUNTLET","#ea580c","🔥"),(25,"MOONSHOT","#6b21a8","🌌")]
 ODDS_LABELS  = ["2.0×","5.0×","10.0×","20.0×","100.0×","250.0×","500.0×","1000.0×+"]
 
@@ -403,8 +533,10 @@ with tab1:
                 if h_st and a_st and h_cnt>=3 and a_cnt>=3:
                     pick,pt,ln,cf,sg,_=generate_ai_pick(h_st,a_st,m.get("league_name",""),sniper_mode)
                     if cf>0:
-                        valid_picks.append({"match":f"{m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}","league":m.get("league_name",""),"pick":pick,"conf":cf,"time":m.get("match_time",""),"sigs":sg,"tier":sportsbook_tier(m.get("league_name",""))})
-        valid_picks.sort(key=lambda x:x["conf"],reverse=True); chosen=valid_picks[:n_picks]
+                        valid_picks.append({"match":f"{m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}","league":m.get("league_name",""),"pick":pick,"conf":cf,"time":m.get("match_time",""),"sigs":sg,"tier":sportsbook_tier(m.get("league_name","")),"imp":match_importance(m)})
+        # Primary sort: confidence; secondary: match importance (big games preferred at equal conf)
+        valid_picks.sort(key=lambda x:(x["conf"], x.get("imp",0)), reverse=True)
+        chosen=valid_picks[:n_picks]
         if not chosen:
             st.markdown("<div class='empty-state'><div class='empty-state-icon'>🎯</div><div class='empty-state-text'>No picks meet the threshold today</div><div class='empty-state-sub'>Try disabling Sniper Mode or enabling more book tiers</div></div>",unsafe_allow_html=True)
         else:
@@ -412,7 +544,8 @@ with tab1:
             m1,m2,m3=st.columns(3);m1.metric("Legs",len(chosen));m2.metric("Avg Confidence",f"{avg_conf:.1f}%");m3.metric("Mode","🎯 SNIPER" if sniper_mode else "STANDARD")
             st.markdown("<div class='slip-box'>",unsafe_allow_html=True)
             for i,p in enumerate(chosen,1):
-                st.markdown(f"<div class='slip-row'><div class='slip-league'>{i}. {p['league']} · {p['time']} &nbsp; {book_tier_badge(p['tier'])}</div><div class='slip-match'>{p['match']}</div><div class='slip-pick' style='color:{color};'>{p['pick']}</div>{conf_bar_html(p['conf'],color)}{signals_html(p['sigs'])}</div>",unsafe_allow_html=True)
+                imp_s="⭐ " if p.get("imp",0)>=130 else "🔥 " if p.get("imp",0)>=110 else ""
+                st.markdown(f"<div class='slip-row'><div class='slip-league'>{i}. {imp_s}{p['league']} · {p['time']} &nbsp; {book_tier_badge(p['tier'])}</div><div class='slip-match'>{p['match']}</div><div class='slip-pick' style='color:{color};'>{p['pick']}</div>{conf_bar_html(p['conf'],color)}{signals_html(p['sigs'])}</div>",unsafe_allow_html=True)
             st.markdown("</div>",unsafe_allow_html=True)
 
 # ══ TAB 2 ═════════════════════════════════════════════════════════════════════
@@ -444,13 +577,17 @@ with tab3:
     if not show_matches:
         st.markdown("<div class='empty-state'><div class='empty-state-icon'>📭</div><div class='empty-state-text'>No matches in this category right now</div></div>",unsafe_allow_html=True)
     else:
-        for l_name in sorted(set(m.get("league_name","") for m in show_matches)):
+        for l_name, l_matches in sort_leagues_and_matches(show_matches):
             tier=sportsbook_tier(l_name)
-            st.markdown(f"<div class='league-header'>🏆 {l_name} &nbsp; {book_tier_badge(tier)}</div>",unsafe_allow_html=True)
-            for m in [g for g in show_matches if g.get("league_name")==l_name]:
+            prestige_rank = LEAGUE_PRESTIGE.get(l_name, 99)
+            prestige_crown = "👑" if prestige_rank <= 3 else "⚽" if prestige_rank <= 14 else "🏆"
+            st.markdown(f"<div class='league-header'>{prestige_crown} {l_name} &nbsp; {book_tier_badge(tier)}</div>",unsafe_allow_html=True)
+            for m in l_matches:
+                imp=match_importance(m)
+                star_pfx="⭐ " if imp>=130 else "🔥 " if imp>=110 else ""
                 status=m.get("match_status",""); home=m.get("match_hometeam_name","?"); away=m.get("match_awayteam_name","?"); t=m.get("match_time","")
                 live=is_live_status(status); prefix="🔴 LIVE · " if live else "✅ FT · " if is_finished(status) else ""
-                with st.expander(f"{prefix}🕒 {t} | {home} vs {away}"):
+                with st.expander(f"{prefix}{star_pfx}🕒 {t} | {home} vs {away}"):
                     if live: st.markdown(f"<div class='live-banner'><span class='live-dot'></span>LIVE: {m.get('match_hometeam_score','?')} – {m.get('match_awayteam_score','?')} ({status}')</div>",unsafe_allow_html=True)
                     with st.spinner("Fetching stats…"):
                         h_st,h_cnt=fetch_stats(m.get("match_hometeam_id"),"home")
