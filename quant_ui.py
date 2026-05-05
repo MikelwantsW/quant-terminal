@@ -198,6 +198,59 @@ LEAGUE_PROFILE = {
 }
 DEFAULT_PROFILE = (1.0,1.0,1.0,2.0)
 
+# ── MARKET DEPTH MAP ──────────────────────────────────────────────────────────
+# Defines which specialty markets are reliably offered by sportsbooks per league.
+# Based on real-world availability on Bet365 / Betano / Betway / 1xBet.
+#   goals   = Over/Under goals (always available everywhere)
+#   corners = Corner totals (available Tier A + most Tier B)
+#   cards   = Card totals   (available Tier A + some Tier B, NOT J-League/Saudi/Nordic)
+#   sot     = Shots on target (Tier A only — rarely offered elsewhere)
+MARKET_DEPTH = {
+    # ── Tier A — full markets on all books ──
+    "Premier League":                   {"goals","corners","cards","sot"},
+    "La Liga":                          {"goals","corners","cards","sot"},
+    "Serie A":                          {"goals","corners","cards","sot"},
+    "Bundesliga":                       {"goals","corners","cards","sot"},
+    "Ligue 1":                          {"goals","corners","cards","sot"},
+    "UEFA Champions League":            {"goals","corners","cards","sot"},
+    "UEFA Europa League":               {"goals","corners","cards","sot"},
+    "UEFA Europa Conference League":    {"goals","corners","cards","sot"},
+    "Championship":                     {"goals","corners","cards","sot"},
+    # ── Tier B — goals + corners + cards, no SOT ──
+    "Eredivisie":                       {"goals","corners","cards"},
+    "Primeira Liga":                    {"goals","corners","cards"},
+    "Süper Lig":                        {"goals","corners","cards"},
+    "Scottish Premiership":             {"goals","corners","cards"},
+    "Scottish Premier League":          {"goals","corners","cards"},
+    "Belgian Pro League":               {"goals","corners","cards"},
+    "Belgian First Division A":         {"goals","corners","cards"},
+    "Swiss Super League":               {"goals","corners","cards"},
+    "Austrian Football Bundesliga":     {"goals","corners","cards"},
+    "Austrian Bundesliga":              {"goals","corners","cards"},
+    "Major League Soccer":              {"goals","corners","cards"},
+    "Brasileirao Serie A":              {"goals","corners","cards"},
+    "Argentine Primera División":       {"goals","corners","cards"},
+    # ── Nordic — goals + corners ONLY, no cards/SOT on most books ──
+    "Allsvenskan":                      {"goals","corners"},
+    "Eliteserien":                      {"goals","corners"},
+    "Superliga":                        {"goals","corners"},
+    # ── Tier C — goals ONLY reliably; corners sometimes; cards/SOT almost never ──
+    "Veikkausliiga":                    {"goals"},
+    "SuperLiga":                        {"goals","corners"},
+    "Serbian SuperLiga":                {"goals","corners"},
+    "Greek Super League":               {"goals","corners"},
+    "Czech First League":               {"goals","corners"},
+    "Polish Ekstraklasa":               {"goals","corners"},
+    "Saudi Pro League":                 {"goals"},
+    "Saudi Professional League":        {"goals"},
+    "J1 League":                        {"goals"},          # ← The exact bug you hit
+}
+DEFAULT_MARKETS = {"goals"}  # fallback for unknown leagues — goals only
+
+def available_markets(league: str) -> set:
+    """Return the set of market types available for this league on sportsbooks."""
+    return MARKET_DEPTH.get(league, DEFAULT_MARKETS)
+
 # ── LEAGUE PRESTIGE RANKING ───────────────────────────────────────────────────
 # Lower number = shown first. Used to sort leagues before displaying matches.
 LEAGUE_PRESTIGE = {
@@ -416,8 +469,9 @@ def fetch_events(date_from,date_to):
     except: return []
 
 # ── EDGE ENGINE ───────────────────────────────────────────────────────────────
-def generate_ai_pick(h_st,a_st,league,sniper_mode=False):
+def generate_ai_pick(h_st,a_st,league,sniper_mode=False,h_cnt=5,a_cnt=5):
     gm,cm,kdm,conf_pen=LEAGUE_PROFILE.get(league,DEFAULT_PROFILE)
+    markets = available_markets(league)  # which markets exist on books for this league
     proj_g=(((h_st['gf']+a_st['ga'])/2)+((a_st['gf']+h_st['ga'])/2))*gm
     proj_c=(((h_st['cf']+a_st['ca'])/2)+((a_st['cf']+h_st['ca'])/2))*cm
     proj_sot=((h_st['sotf']+a_st['sota'])/2)+((a_st['sotf']+h_st['sota'])/2)
@@ -431,56 +485,67 @@ def generate_ai_pick(h_st,a_st,league,sniper_mode=False):
         "SOT confirms under":proj_g<=2.2 and proj_sot<=6.5,
     }
     base=65.0-conf_pen; min_conf=82.0 if sniper_mode else 72.0; plays=[]
+    # Sample size penalty — reduce confidence for small samples
+    avg_cnt = (h_cnt + a_cnt) / 2
+    sample_pen = max(0.0, (5 - avg_cnt) * 4.0)   # -4pts per game below 5-game avg
+    base = max(50.0, base - sample_pen)
+    # Minimum sample gates: goals need 3 games, exotic markets need 5
+    min_sample_goals   = 3
+    min_sample_exotic  = 5   # corners, cards, SOT
 
-    if proj_g>=2.8:
-        line=3.5 if proj_g>=4.2 else 2.5 if proj_g>=3.2 else 1.5; gap=proj_g-line
-        if gap>=0.8:
-            conf=min(99.0,base+(gap/max(line,.01))*90)
-            if sigs["SOT confirms goals"]: conf=min(99.0,conf+5)
-            if sigs["Both score form"]:    conf=min(99.0,conf+3)
-            plays.append((f"⚽ Over {line} Goals","goals",line,conf,{k:v for k,v in sigs.items() if k in ("SOT confirms goals","Both score form","High corners")}))
-    elif proj_g<=2.2:
-        line=1.5 if proj_g<=1.2 else 2.5 if proj_g<=1.8 else 3.5; gap=line-proj_g
-        if gap>=0.8:
-            conf=min(99.0,base+(gap/max(line,.01))*90)
-            if sigs["SOT confirms under"]: conf=min(99.0,conf+5)
-            plays.append((f"🔒 Under {line} Goals","under_goals",line,conf,{k:v for k,v in sigs.items() if k in ("SOT confirms under","Low corners","Low SOT")}))
+    if "goals" in markets and avg_cnt >= min_sample_goals:
+        if proj_g>=2.8:
+            line=3.5 if proj_g>=4.2 else 2.5 if proj_g>=3.2 else 1.5; gap=proj_g-line
+            if gap>=0.8:
+                conf=min(99.0,base+(gap/max(line,.01))*90)
+                if sigs["SOT confirms goals"]: conf=min(99.0,conf+5)
+                if sigs["Both score form"]:    conf=min(99.0,conf+3)
+                plays.append((f"⚽ Over {line} Goals","goals",line,conf,{k:v for k,v in sigs.items() if k in ("SOT confirms goals","Both score form","High corners")}))
+        elif proj_g<=2.2:
+            line=1.5 if proj_g<=1.2 else 2.5 if proj_g<=1.8 else 3.5; gap=line-proj_g
+            if gap>=0.8:
+                conf=min(99.0,base+(gap/max(line,.01))*90)
+                if sigs["SOT confirms under"]: conf=min(99.0,conf+5)
+                plays.append((f"🔒 Under {line} Goals","under_goals",line,conf,{k:v for k,v in sigs.items() if k in ("SOT confirms under","Low corners","Low SOT")}))
 
-    if proj_c>=10.0:
-        valid=[l for l in [8.5,9.5,10.5,11.5,12.5,13.5] if l<=proj_c-1.8]
-        if valid:
-            line=max(valid);gap=proj_c-line;conf=min(99.0,base+(gap/max(line,.01))*75)
-            if sigs["High SOT"]: conf=min(99.0,conf+4)
-            plays.append((f"🔥 Over {line} Corners","corners",line,conf,{k:v for k,v in sigs.items() if k in ("High SOT","High scoring")}))
-    elif proj_c<=8.0:
-        valid=[l for l in [6.5,7.5,8.5,9.5] if l>=proj_c+1.8]
-        if valid:
-            line=min(valid);gap=line-proj_c;conf=min(99.0,base+(gap/max(line,.01))*75)
-            if sigs["Low SOT"]: conf=min(99.0,conf+4)
-            plays.append((f"🛡️ Under {line} Corners","under_corners",line,conf,{k:v for k,v in sigs.items() if k in ("Low SOT","Low scoring")}))
+    if "corners" in markets and avg_cnt >= min_sample_exotic:
+        if proj_c>=10.0:
+            valid=[l for l in [8.5,9.5,10.5,11.5,12.5,13.5] if l<=proj_c-1.8]
+            if valid:
+                line=max(valid);gap=proj_c-line;conf=min(99.0,base+(gap/max(line,.01))*75)
+                if sigs["High SOT"]: conf=min(99.0,conf+4)
+                plays.append((f"🔥 Over {line} Corners","corners",line,conf,{k:v for k,v in sigs.items() if k in ("High SOT","High scoring")}))
+        elif proj_c<=8.0:
+            valid=[l for l in [6.5,7.5,8.5,9.5] if l>=proj_c+1.8]
+            if valid:
+                line=min(valid);gap=line-proj_c;conf=min(99.0,base+(gap/max(line,.01))*75)
+                if sigs["Low SOT"]: conf=min(99.0,conf+4)
+                plays.append((f"🛡️ Under {line} Corners","under_corners",line,conf,{k:v for k,v in sigs.items() if k in ("Low SOT","Low scoring")}))
 
-    if proj_cd>=5.0:
-        valid=[l for l in [3.5,4.5,5.5,6.5] if l<=proj_cd-1.5]
-        if valid:
-            line=max(valid);gap=proj_cd-line;conf=min(99.0,base+(gap/max(line,.01))*55)
-            plays.append((f"🟨 Over {line} Cards","cards",line,conf,{"High card league":kdm>=1.1}))
-    elif proj_cd<=2.5:
-        valid=[l for l in [3.5,4.5] if l>=proj_cd+1.5]
-        if valid:
-            line=min(valid);gap=line-proj_cd;conf=min(99.0,base+(gap/max(line,.01))*55)
-            plays.append((f"🧊 Under {line} Cards","under_cards",line,conf,{"Low card league":kdm<=0.92}))
+    if "cards" in markets and avg_cnt >= min_sample_exotic:
+        if proj_cd>=5.0:
+            valid=[l for l in [3.5,4.5,5.5,6.5] if l<=proj_cd-1.5]
+            if valid:
+                line=max(valid);gap=proj_cd-line;conf=min(99.0,base+(gap/max(line,.01))*55)
+                plays.append((f"🟨 Over {line} Cards","cards",line,conf,{"High card league":kdm>=1.1}))
+        elif proj_cd<=2.5:
+            valid=[l for l in [3.5,4.5] if l>=proj_cd+1.5]
+            if valid:
+                line=min(valid);gap=line-proj_cd;conf=min(99.0,base+(gap/max(line,.01))*55)
+                plays.append((f"🧊 Under {line} Cards","under_cards",line,conf,{"Low card league":kdm<=0.92}))
 
-    if proj_sot>=9.0:
-        valid=[l for l in [7.5,8.5,9.5,10.5,11.5] if l<=proj_sot-1.8]
-        if valid:
-            line=max(valid);gap=proj_sot-line;conf=min(99.0,base+(gap/max(line,.01))*65)
-            if sigs["High scoring"]: conf=min(99.0,conf+3)
-            plays.append((f"🎯 Over {line} SOT","sot",line,conf,{k:v for k,v in sigs.items() if k in ("High scoring","Both score form")}))
-    elif proj_sot<=6.0:
-        valid=[l for l in [5.5,6.5,7.5] if l>=proj_sot+1.8]
-        if valid:
-            line=min(valid);gap=line-proj_sot;conf=min(99.0,base+(gap/max(line,.01))*65)
-            plays.append((f"🧱 Under {line} SOT","under_sot",line,conf,{"Low scoring":sigs["Low scoring"]}))
+    if "sot" in markets and avg_cnt >= min_sample_exotic:
+        if proj_sot>=9.0:
+            valid=[l for l in [7.5,8.5,9.5,10.5,11.5] if l<=proj_sot-1.8]
+            if valid:
+                line=max(valid);gap=proj_sot-line;conf=min(99.0,base+(gap/max(line,.01))*65)
+                if sigs["High scoring"]: conf=min(99.0,conf+3)
+                plays.append((f"🎯 Over {line} SOT","sot",line,conf,{k:v for k,v in sigs.items() if k in ("High scoring","Both score form")}))
+        elif proj_sot<=6.0:
+            valid=[l for l in [5.5,6.5,7.5] if l>=proj_sot+1.8]
+            if valid:
+                line=min(valid);gap=line-proj_sot;conf=min(99.0,base+(gap/max(line,.01))*65)
+                plays.append((f"🧱 Under {line} SOT","under_sot",line,conf,{"Low scoring":sigs["Low scoring"]}))
 
     plays=[p for p in plays if p[3]>=min_conf]
     plays.sort(key=lambda x:x[3],reverse=True)
@@ -610,7 +675,7 @@ with tab1:
                 h_st,h_cnt=fetch_stats(m.get("match_hometeam_id"),"home")
                 a_st,a_cnt=fetch_stats(m.get("match_awayteam_id"),"away")
                 if h_st and a_st and h_cnt>=3 and a_cnt>=3:
-                    pick,pt,ln,cf,sg,_=generate_ai_pick(h_st,a_st,m.get("league_name",""),sniper_mode)
+                    pick,pt,ln,cf,sg,_=generate_ai_pick(h_st,a_st,m.get("league_name",""),sniper_mode,h_cnt,a_cnt)
                     if cf>0:
                         valid_picks.append({"match":f"{m.get('match_hometeam_name')} vs {m.get('match_awayteam_name')}","league":m.get("league_name",""),"pick":pick,"conf":cf,"time":m.get("match_time",""),"sigs":sg,"tier":sportsbook_tier(m.get("league_name","")),"imp":match_importance(m)})
         # Primary sort: confidence; secondary: match importance (big games preferred at equal conf)
@@ -676,7 +741,10 @@ with tab3:
                         a_st,a_cnt=fetch_stats(m.get("match_awayteam_id"),"away")
                     if not h_st or not a_st: st.warning("⚠️ Insufficient data."); continue
                     if h_cnt<3 or a_cnt<3: st.info(f"📉 Low sample: {home}({h_cnt}) / {away}({a_cnt})")
-                    pick,p_type,thresh,conf,sigs,all_plays=generate_ai_pick(h_st,a_st,l_name,sniper_mode)
+                    pick,p_type,thresh,conf,sigs,all_plays=generate_ai_pick(h_st,a_st,l_name,sniper_mode,h_cnt,a_cnt)
+                    avail_mkts = available_markets(l_name)
+                    mkt_icons  = {"goals":"⚽ Goals","corners":"🔥 Corners","cards":"🟨 Cards","sot":"🎯 SOT"}
+                    mkt_tags   = " ".join(f"<span style='font-size:10px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.25);padding:2px 6px;border-radius:8px;font-family:DM Mono,monospace;'>{mkt_icons[k]}</span>" for k in mkt_icons if k in avail_mkts)
                     ref=m.get("match_referee","")
                     ref_html=f"<a href='https://www.google.com/search?q={ref.replace(' ','+')}+referee+stats' target='_blank' class='ref-tag'>⚖️ {ref}</a>" if ref else "<span class='ref-tag'>⚖️ TBD</span>"
                     odds_key=f"odds_{m.get('match_id','')}"
@@ -685,7 +753,7 @@ with tab3:
                     with c_pick:
                         is_sniper=conf>=82; card_cls="sniper-card" if is_sniper else "pick-card"; lbl_cls="sniper-label" if is_sniper else "pick-label"
                         badge="<div class='sniper-badge'>🎯 SNIPER PICK</div>" if is_sniper else ""
-                        st.markdown(f"<div class='{card_cls}'>{badge}<div class='{lbl_cls}'>{pick}</div>{ref_html}{conf_bar_html(conf,'#f97316' if is_sniper else '#16a34a')}{signals_html(sigs)}</div>",unsafe_allow_html=True)
+                        st.markdown(f"<div class='{card_cls}'>{badge}<div class='{lbl_cls}'>{pick}</div>{ref_html}{conf_bar_html(conf,'#f97316' if is_sniper else '#16a34a')}{signals_html(sigs)}<div style='margin-top:8px;'>{mkt_tags}</div></div>",unsafe_allow_html=True)
                         user_odds=st.number_input("Enter bookmaker odds (decimal)",min_value=1.01,max_value=50.0,step=0.05,value=st.session_state[odds_key],key=odds_key)
                         if conf>0 and user_odds>1.0:
                             kelly_stake=kelly_fraction(conf_to_prob(conf),user_odds,kelly_divisor)
@@ -717,7 +785,7 @@ with tab4:
                 if m.get("league_name") not in ACTIVE_LEAGUES: continue
                 h_st,_=fetch_stats(m.get("match_hometeam_id"),"home"); a_st,_=fetch_stats(m.get("match_awayteam_id"),"away")
                 if not h_st or not a_st: continue
-                pick,p_type,thresh,conf,sigs,_=generate_ai_pick(h_st,a_st,m.get("league_name",""),sniper_mode)
+                pick,p_type,thresh,conf,sigs,_=generate_ai_pick(h_st,a_st,m.get("league_name",""),sniper_mode,8,8)
                 if conf==0 or p_type=="pass": continue
                 won=check_result(p_type,thresh,m)
                 if won is None: skipped+=1; continue
