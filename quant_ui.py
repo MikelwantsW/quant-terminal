@@ -1762,6 +1762,11 @@ with tab3:
                             st.markdown(value_panel_html(conf,user_odds,kelly_divisor)+(f"<div style='text-align:center;margin-top:6px;font-size:13px;color:#64748b;'>= <b style='color:#e2e8f0;'>{actual_stake} units</b></div>" if kelly_stake>0 else ""),unsafe_allow_html=True)
                     with c_stats:
                         gm,cm,kdm,_=LEAGUE_PROFILE.get(l_name,DEFAULT_PROFILE)
+                        # Pre-compute weather display strings (avoids nested f-string errors)
+                        _wx_avail = weather_impact.get('available', False)
+                        _wx_cond  = weather_impact.get('condition','N/A').title() if _wx_avail else '—'
+                        _wx_str   = (f"{weather_impact['temp']:.0f}°C · {weather_impact['rain']:.1f}mm · "
+                                     f"{weather_impact['wind']:.0f}km/h") if _wx_avail else '—'
                         hG,aG,hC,aC_c,ha_s=get_ha_profile(l_name)
                         # HA-weighted projections for display
                         pg=((h_st['gf']*hG+a_st['ga']*hG)/2+(a_st['gf']*aG+h_st['ga']*aG)/2)*gm
@@ -1779,8 +1784,8 @@ with tab3:
                             f"<div class='stat-row'><span>{ha_icon} Home Advantage</span><span class='stat-val' style='font-size:12px;'>{ha_labels.get(ha_s,'?')}</span></div>"
                             f"<div class='stat-row'><span>Home goal boost</span><span class='stat-val' style='color:#4ade80;'>×{hG:.2f}</span></div>"
                             f"<div class='stat-row'><span>Away card risk</span><span class='stat-val' style='color:#f97316;'>×{aC_c:.2f}</span></div>"
-                            f"<div class='stat-row'><span>🌤️ Weather</span><span class='stat-val' style='font-size:11px;'>{weather_impact.get('condition','N/A').title() if weather_impact.get('available') else 'Unavailable'}</span></div>"
-                            f"<div class='stat-row'><span>Temp / Rain / Wind</span><span class='stat-val' style='font-size:11px;'>{weather_impact.get('temp','?'):.0f}°C · {weather_impact.get('rain',0):.1f}mm · {weather_impact.get('wind',0):.0f}km/h</span></div>"
+                            f"<div class='stat-row'><span>🌤️ Weather</span><span class='stat-val' style='font-size:11px;'>{_wx_cond}</span></div>"
+                            f"<div class='stat-row'><span>Temp / Rain / Wind</span><span class='stat-val' style='font-size:11px;'>{_wx_str}</span></div>"
                             f"</div>",unsafe_allow_html=True)
                         if len(all_plays)>1:
                             st.markdown("<div style='margin-top:10px;font-size:11px;color:#475569;'>Alt plays:</div>",unsafe_allow_html=True)
