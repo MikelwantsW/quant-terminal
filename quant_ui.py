@@ -1594,6 +1594,8 @@ with st.sidebar:
     tier_a=st.checkbox("Tier A — All Books",value=True)
     tier_b=st.checkbox("Tier B — Most Books",value=True)
     tier_c=st.checkbox("Tier C — Specialist Books",value=False)
+    if tier_c:
+        st.markdown("<div style='background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.25);border-radius:6px;padding:8px 10px;font-size:11px;color:#fb923c;margin-top:4px;'>⚠️ Tier C games may not appear on major books (Betano, Bet365, Betway). Accuracy stats may be inflated.</div>",unsafe_allow_html=True)
     st.divider()
     st.markdown("**💰 Kelly Calculator**")
     kelly_divisor=st.slider("Kelly fraction (safety)",2,8,4)
@@ -1610,6 +1612,19 @@ ACTIVE_LEAGUES=set()
 if tier_a: ACTIVE_LEAGUES|=SPORTSBOOK_TIER_A
 if tier_b: ACTIVE_LEAGUES|=SPORTSBOOK_TIER_B
 if tier_c: ACTIVE_LEAGUES|=SPORTSBOOK_TIER_C
+
+# STRICT_BOOKABLE = leagues reliably on Bet365 + Betway + Betano with full markets.
+# Used in accuracy tab to avoid inflating win rate with unbettable games.
+STRICT_BOOKABLE = {
+    "Premier League","Serie A","La Liga","Bundesliga","Ligue 1",
+    "UEFA Champions League","UEFA Europa League","UEFA Europa Conference League",
+    "Championship","Eredivisie","Primeira Liga","Süper Lig",
+    "Scottish Premiership","Scottish Premier League",
+    "Belgian Pro League","Belgian First Division A",
+    "Swiss Super League","Austrian Football Bundesliga","Austrian Bundesliga",
+    "Allsvenskan","Eliteserien","Superliga",
+    "Major League Soccer","Brasileirao Serie A","Argentine Primera División",
+}
 
 # ── HEADER ────────────────────────────────────────────────────────────────────
 st.markdown("<div class='page-title'>🏦 Institutional Quant Radar</div>",unsafe_allow_html=True)
@@ -1638,6 +1653,94 @@ c5.metric("📆 This Week",   len(weekly_matches))
 st.write("")
 
 # ── TABS ──────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+#  ACCURACY HISTORY ENGINE
+#  Stores daily accuracy records in a local JSON file.
+#  Falls back to session_state if file I/O fails (e.g. read-only filesystem).
+# ═════════════════════════════════════════════════════════════════════════════
+import json, os, csv
+from io import StringIO
+
+HISTORY_FILE = "accuracy_history.json"
+
+def load_history() -> list:
+    """Load accuracy history from file. Returns list of daily records."""
+    # Try session state cache first (fast path)
+    if "acc_history" in st.session_state:
+        return st.session_state["acc_history"]
+    try:
+        if os.path.exists(HISTORY_FILE):
+            with open(HISTORY_FILE, "r") as f:
+                data = json.load(f)
+                st.session_state["acc_history"] = data
+                return data
+    except Exception:
+        pass
+    st.session_state["acc_history"] = []
+    return []
+
+def save_history(history: list):
+    """Save history to file and session state."""
+    st.session_state["acc_history"] = history
+    try:
+        with open(HISTORY_FILE, "w") as f:
+            json.dump(history, f, indent=2)
+    except Exception:
+        pass  # read-only FS on some cloud deployments — session_state still works
+
+def upsert_daily_record(date_str: str, wins: int, losses: int,
+                         picks: int, market_breakdown: dict, sniper: bool):
+    """
+    Add or update a daily accuracy record.
+    If the date already exists, overwrite it (re-run of same day).
+    """
+    history = load_history()
+    record = {
+        "date":       date_str,
+        "wins":       wins,
+        "losses":     losses,
+        "picks":      picks,
+        "win_rate":   round(wins / max(picks, 1) * 100, 1),
+        "sniper":     sniper,
+        "markets":    market_breakdown,
+        "logged_at":  now.strftime("%Y-%m-%d %H:%M"),
+    }
+    # Remove existing record for this date if present
+    history = [r for r in history if r.get("date") != date_str]
+    history.append(record)
+    # Keep chronological order
+    history.sort(key=lambda x: x["date"])
+    save_history(history)
+    return record
+
+def history_to_csv(history: list) -> str:
+    """Convert history list to CSV string for download."""
+    if not history: return ""
+    output = StringIO()
+    fields = ["date","wins","losses","picks","win_rate","sniper","logged_at"]
+    writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(history)
+    return output.getvalue()
+
+def rolling_win_rate(history: list, days: int) -> float | None:
+    """Compute win rate over the last N days of history."""
+    recent = history[-days:] if len(history) >= days else history
+    if not recent: return None
+    total_w = sum(r["wins"] for r in recent)
+    total_p = sum(r["picks"] for r in recent)
+    return round(total_w / max(total_p, 1) * 100, 1)
+
+def market_totals(history: list) -> dict:
+    """Aggregate per-market wins/losses across all history."""
+    totals = {}
+    for r in history:
+        for mkt, rec in r.get("markets", {}).items():
+            totals.setdefault(mkt, {"w": 0, "l": 0})
+            totals[mkt]["w"] += rec.get("w", 0)
+            totals[mkt]["l"] += rec.get("l", 0)
+    return totals
+
 tab1,tab2,tab3,tab4,tab5=st.tabs(["🎟️ Auto-Acca","📝 Weekly Slip","🔥 Daily Picks","📊 Accuracy","💡 Edge Guide"])
 
 # ══ TAB 1 ═════════════════════════════════════════════════════════════════════
@@ -1821,40 +1924,403 @@ with tab3:
 
 # ══ TAB 4 ═════════════════════════════════════════════════════════════════════
 with tab4:
-    st.markdown("### 📊 Yesterday's Accuracy")
-    st.markdown(f"<div style='color:#475569;font-size:13px;margin-bottom:16px;'>📅 {yesterday_str}</div>",unsafe_allow_html=True)
-    with st.spinner("Fetching results…"):
-        yesterday_res=fetch_events(yesterday_str,yesterday_str)
-    finished_yday=[m for m in yesterday_res if is_finished(m.get("match_status",""))]
-    if not finished_yday:
-        st.markdown("<div class='empty-state'><div class='empty-state-icon'>📭</div><div class='empty-state-text'>No finished matches yesterday</div></div>",unsafe_allow_html=True)
-    else:
-        results_by_type={}; wins=losses=skipped=0
-        with st.spinner("Back-testing…"):
-            for m in finished_yday:
-                if m.get("league_name") not in ACTIVE_LEAGUES: continue
-                h_st,_=fetch_stats(m.get("match_hometeam_id"),"home"); a_st,_=fetch_stats(m.get("match_awayteam_id"),"away")
-                if not h_st or not a_st: continue
-                pick,p_type,thresh,conf,sigs,_=generate_ai_pick(h_st,a_st,m.get("league_name",""),sniper_mode,8,8)
-                if conf==0 or p_type=="pass": continue
-                won=check_result(p_type,thresh,m)
-                if won is None: skipped+=1; continue
-                results_by_type.setdefault(p_type,{"w":0,"l":0})
-                if won: wins+=1;results_by_type[p_type]["w"]+=1
-                else: losses+=1;results_by_type[p_type]["l"]+=1
-                home=m.get("match_hometeam_name",""); away=m.get("match_awayteam_name",""); hs=m.get("match_hometeam_score","?"); as_=m.get("match_awayteam_score","?")
-                tier=sportsbook_tier(m.get("league_name","")); ico="✅" if won else "❌"; cls="acc-win" if won else "acc-loss"
-                st.markdown(f"<div class='accuracy-row {cls}'><span style='font-size:18px;'>{ico}</span><div style='flex:1;'><div style='font-weight:600;font-size:13px;'>{home} vs {away}</div><div style='font-size:11px;color:#64748b;'>FT: {hs}–{as_} · {m.get('league_name','')} {book_tier_badge(tier)}</div></div><div style='text-align:right;'><div style='font-family:DM Mono,monospace;font-size:12px;color:#e2e8f0;'>{pick}</div><div style='font-size:11px;color:#475569;'>{conf:.0f}%</div></div></div>",unsafe_allow_html=True)
-        total=wins+losses
-        if total>0:
-            wr=wins/total*100; st.divider()
-            mc1,mc2,mc3,mc4=st.columns(4)
-            mc1.metric("Win Rate",f"{wr:.1f}%",delta=f"+{wins}W / -{losses}L"); mc2.metric("Picks",total); mc3.metric("Wins",wins); mc4.metric("Losses",losses)
+    st.markdown("### 📊 Accuracy Tracker")
+
+    # Strict bookable filter — ON by default to prevent inflated stats
+    acc_col1, acc_col2 = st.columns([3,1])
+    with acc_col1:
+        st.markdown("<div class='info-box'>Accuracy is tracked against finished matches. Enable <b>Strict Mode</b> to only count games that are reliably listed on major sportsbooks — this gives you a true win rate you can actually replicate.</div>",unsafe_allow_html=True)
+    with acc_col2:
+        strict_acc = st.toggle("📚 Strict Bookable Only", value=True,
+                               help="Only count picks from Tier A + Tier B leagues that are on Bet365/Betway/Betano")
+    acc_filter_leagues = STRICT_BOOKABLE if strict_acc else ACTIVE_LEAGUES
+
+    history = load_history()
+
+    # ── Sub-tabs: Today's Results | Historical Trends | Per-Market | Manage ──
+    acc_t1, acc_t2, acc_t3, acc_t4 = st.tabs([
+        "📅 Yesterday's Results", "📈 Win Rate Over Time",
+        "🎯 Per-Market History", "⚙️ Manage Records"
+    ])
+
+    # ══ SUB-TAB 1: Yesterday's Results + auto-log ════════════════════════════
+    with acc_t1:
+        st.markdown(f"<div style='color:#475569;font-size:13px;margin-bottom:16px;'>📅 Backtesting {yesterday_str} · Results auto-saved to history</div>",unsafe_allow_html=True)
+        with st.spinner("Fetching yesterday's results…"):
+            yesterday_res = fetch_events(yesterday_str, yesterday_str)
+        finished_yday = [m for m in yesterday_res if is_finished(m.get("match_status",""))]
+
+        if not finished_yday:
+            st.markdown("<div class='empty-state'><div class='empty-state-icon'>📭</div><div class='empty-state-text'>No finished matches yesterday</div></div>",unsafe_allow_html=True)
+        else:
+            results_by_type = {}; wins = losses = skipped = 0
+            pick_log = []
+
+            with st.spinner("Back-testing picks…"):
+                for m in finished_yday:
+                    lg_name = m.get("league_name","")
+                    if lg_name not in acc_filter_leagues: continue
+                    if strict_acc and book_tier(lg_name) not in ("A","B"): continue
+                    h_st,_ = fetch_stats(m.get("match_hometeam_id"),"home")
+                    a_st,_ = fetch_stats(m.get("match_awayteam_id"),"away")
+                    if not h_st or not a_st: continue
+                    pick,p_type,thresh,conf,sigs,_ = generate_ai_pick(
+                    h_st,a_st,m.get("league_name",""),sniper_mode,8,8)
+                    if conf==0 or p_type=="pass": continue
+                    won = check_result(p_type, thresh, m)
+                    if won is None: skipped+=1; continue
+                    results_by_type.setdefault(p_type, {"w":0,"l":0})
+                    if won: wins+=1; results_by_type[p_type]["w"]+=1
+                    else:   losses+=1; results_by_type[p_type]["l"]+=1
+                    pick_log.append({"won":won,"pick":pick,"conf":conf,
+                    "home":m.get("match_hometeam_name",""),
+                    "away":m.get("match_awayteam_name",""),
+                    "hs":m.get("match_hometeam_score","?"),
+                    "as_":m.get("match_awayteam_score","?"),
+                    "league":m.get("league_name",""),
+                    "tier":book_tier(m.get("league_name",""))})
+
+            total = wins + losses
+            if total > 0:
+                # Auto-save to history
+                upsert_daily_record(yesterday_str, wins, losses, total,
+                                    results_by_type, sniper_mode)
+                history = load_history()  # reload with new record
+
+                wr = wins/total*100
+                mc1,mc2,mc3,mc4 = st.columns(4)
+                mc1.metric("Win Rate",  f"{wr:.1f}%", delta=f"+{wins}W / -{losses}L")
+                mc2.metric("Picks",     total)
+                mc3.metric("Wins",      wins)
+                mc4.metric("Losses",    losses)
+                st.divider()
+
+            # Match-by-match results
+            for p in pick_log:
+                ico = "✅" if p["won"] else "❌"
+                cls = "acc-win" if p["won"] else "acc-loss"
+                tier = p.get("tier") or sportsbook_tier(p["league"])
+                # Flag picks not on strict bookable list
+                not_bookable = strict_acc and tier == "C"
+                nb_warn = " <span style='color:#f97316;font-size:10px;font-family:DM Mono,monospace;'>⚠️ CHECK AVAILABILITY</span>" if not_bookable else ""
+                st.markdown(
+                    f"<div class='accuracy-row {cls}' style='opacity:{"0.6" if not_bookable else "1"};'>"    
+                    f"<span style='font-size:18px;'>{ico}</span>"
+                    f"<div style='flex:1;'>"
+                    f"<div style='font-weight:600;font-size:13px;'>{p['home']} vs {p['away']}</div>"
+                    f"<div style='font-size:11px;color:#64748b;'>FT: {p['hs']}–{p['as_']} · {p['league']} {book_tier_badge(tier)}{nb_warn}</div>"
+                    f"</div>"
+                    f"<div style='text-align:right;'>"
+                    f"<div style='font-family:DM Mono,monospace;font-size:12px;color:#e2e8f0;'>{p['pick']}</div>"
+                    f"<div style='font-size:11px;color:#475569;'>{p['conf']:.0f}% conf</div>"
+                    f"</div></div>",
+                    unsafe_allow_html=True
+                )
+
             if results_by_type:
-                st.markdown("#### Market Breakdown")
-                for pt,rec in sorted(results_by_type.items(),key=lambda x:-(x[1]['w']/(x[1]['w']+x[1]['l']) if x[1]['w']+x[1]['l'] else 0)):
-                    t=rec['w']+rec['l'];pct=rec['w']/t*100 if t else 0;c="#16a34a" if pct>=70 else "#ef4444"
-                    st.markdown(f"<div style='margin-bottom:10px;'><div style='display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;'><span style='font-weight:600;'>{pt.replace('_',' ').title()}</span><span style='font-family:DM Mono,monospace;color:{c};'>{pct:.0f}% ({t} picks)</span></div><div class='conf-bar-bg'><div class='conf-bar-fill' style='width:{int(pct)}%;background:{c};'></div></div></div>",unsafe_allow_html=True)
+                st.markdown("#### Market Breakdown — Yesterday")
+                for pt,rec in sorted(results_by_type.items(),
+                                     key=lambda x:-(x[1]['w']/(x[1]['w']+x[1]['l'])
+                                                    if x[1]['w']+x[1]['l'] else 0)):
+                    tc = rec['w']+rec['l']
+                    pct = rec['w']/tc*100 if tc else 0
+                    c = "#16a34a" if pct>=70 else "#f97316" if pct>=50 else "#ef4444"
+                    st.markdown(
+                        f"<div style='margin-bottom:10px;'>"
+                        f"<div style='display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;'>"
+                        f"<span style='font-weight:600;'>{pt.replace('_',' ').title()}</span>"
+                        f"<span style='font-family:DM Mono,monospace;color:{c};'>{pct:.0f}% ({tc} picks)</span>"
+                        f"</div>"
+                        f"<div class='conf-bar-bg'><div class='conf-bar-fill' style='width:{int(pct)}%;background:{c};'></div></div>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+            # ── Tier breakdown ───────────────────────────────────────────────
+            tier_counts = {"A":0,"B":0,"C":0,"?":0}
+            for p in pick_log:
+                tier_counts[p.get("tier","?") or "?"] += 1
+            if any(v>0 for v in tier_counts.values()):
+                st.markdown("#### Source Tier Breakdown")
+                tier_rows = [
+                    ("A","📚 Tier A — All Books","#4ade80","Bet365, Betway, Betano etc."),
+                    ("B","📖 Tier B — Most Books","#fbbf24","Most international books"),
+                    ("C","🔍 Tier C — Specialist","#f97316","May NOT be listed everywhere"),
+                ]
+                for tk, tlabel, tc_color, tdesc in tier_rows:
+                    cnt = tier_counts.get(tk, 0)
+                    if cnt == 0: continue
+                    pct_t = cnt/max(total,1)*100
+                    warn = " ⚠️" if tk == "C" else ""
+                    st.markdown(
+                        f"<div style='display:flex;align-items:center;gap:10px;padding:6px 0;'>"
+                        f"<span style='color:{tc_color};font-weight:700;font-size:13px;min-width:160px;'>{tlabel}{warn}</span>"
+                        f"<span style='color:#64748b;font-size:12px;flex:1;'>{tdesc}</span>"
+                        f"<span style='font-family:DM Mono,monospace;color:{tc_color};font-size:13px;font-weight:700;'>{cnt} picks ({pct_t:.0f}%)</span>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+
+    # ══ SUB-TAB 2: Win Rate Over Time Chart ══════════════════════════════════
+    with acc_t2:
+        if len(history) < 2:
+            st.markdown("<div class='empty-state'><div class='empty-state-icon'>📈</div><div class='empty-state-text'>Need at least 2 days of data</div><div class='empty-state-sub'>Come back tomorrow — records build automatically every day</div></div>",unsafe_allow_html=True)
+        else:
+            # Rolling metrics
+            r7  = rolling_win_rate(history, 7)
+            r14 = rolling_win_rate(history, 14)
+            r30 = rolling_win_rate(history, 30)
+            all_w = sum(r["wins"]  for r in history)
+            all_p = sum(r["picks"] for r in history)
+            all_wr = round(all_w/max(all_p,1)*100, 1)
+
+            col1,col2,col3,col4 = st.columns(4)
+            col1.metric("All-Time",  f"{all_wr}%",  f"{all_w}W / {all_p-all_w}L")
+            col2.metric("Last 7d",   f"{r7}%"  if r7  else "—")
+            col3.metric("Last 14d",  f"{r14}%" if r14 else "—")
+            col4.metric("Last 30d",  f"{r30}%" if r30 else "—")
+            st.divider()
+
+            # Build chart data as SVG sparkline
+            dates    = [r["date"][-5:] for r in history]   # MM-DD
+            wr_vals  = [r["win_rate"] for r in history]
+            picks_v  = [r["picks"]    for r in history]
+            n = len(dates)
+            W, H = 700, 220
+            pad_l, pad_r, pad_t, pad_b = 45, 20, 20, 40
+
+            def scale_x(i):
+                return pad_l + (i / max(n-1,1)) * (W - pad_l - pad_r)
+            def scale_y(v):
+                return pad_t + (1 - (v - 0) / 100) * (H - pad_t - pad_b)
+
+            # Polyline points
+            pts = " ".join(f"{scale_x(i):.1f},{scale_y(v):.1f}" for i,v in enumerate(wr_vals))
+
+            # Bar chart for daily picks count (secondary axis)
+            max_picks = max(picks_v) if picks_v else 1
+            bar_html = ""
+            for i, pk in enumerate(picks_v):
+                bh = int((pk / max_picks) * 30)
+                bx = scale_x(i) - 4
+                by = H - pad_b - bh
+                bar_html += f'<rect x="{bx:.0f}" y="{by}" width="8" height="{bh}" fill="rgba(96,165,250,0.3)" rx="2"/>'
+
+            # X-axis labels (show every 2nd label if many)
+            x_labels = ""
+            step = max(1, n // 12)
+            for i, d in enumerate(dates):
+                if i % step == 0:
+                    x_labels += f'<text x="{scale_x(i):.1f}" y="{H - pad_b + 16}" text-anchor="middle" font-size="9" fill="#475569">{d}</text>'
+
+            # Y-axis grid lines and labels
+            grid_html = ""
+            for pct in [0, 25, 50, 70, 80, 100]:
+                yp = scale_y(pct)
+                col_g = "#16a34a33" if pct == 70 else "#1e293b"
+                lw = "1.5" if pct == 70 else "0.5"
+                grid_html += (f'<line x1="{pad_l}" y1="{yp:.1f}" x2="{W-pad_r}" y2="{yp:.1f}" '
+                              f'stroke="{col_g}" stroke-width="{lw}" stroke-dasharray="{"4,4" if pct!=70 else "none"}"/>'
+                              f'<text x="{pad_l-6}" y="{yp+4:.1f}" text-anchor="end" font-size="9" fill="#475569">{pct}%</text>')
+
+            # Area fill under the line
+            area_pts = f"{scale_x(0):.1f},{H-pad_b} " + pts + f" {scale_x(n-1):.1f},{H-pad_b}"
+
+            # Data point dots
+            dots = ""
+            for i,(v,p) in enumerate(zip(wr_vals, picks_v)):
+                fc = "#4ade80" if v>=70 else "#f97316" if v>=50 else "#ef4444"
+                dots += (f'<circle cx="{scale_x(i):.1f}" cy="{scale_y(v):.1f}" r="4" '
+                         f'fill="{fc}" stroke="#080d14" stroke-width="2"/>')
+
+            svg = f"""<svg viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;background:#09111c;border-radius:10px;border:1px solid #1e293b;">
+  <defs>
+    <linearGradient id="lineGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#16a34a" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#16a34a" stop-opacity="0.02"/>
+    </linearGradient>
+  </defs>
+  {grid_html}
+  {bar_html}
+  <polygon points="{area_pts}" fill="url(#lineGrad)"/>
+  <polyline points="{pts}" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+  {dots}
+  {x_labels}
+  <text x="{pad_l}" y="12" font-size="10" fill="#475569" font-family="monospace">WIN RATE %</text>
+  <text x="{W-pad_r}" y="{H-pad_b+16}" text-anchor="end" font-size="9" fill="#3b82f6">■ daily picks (bars)</text>
+  <line x1="{pad_l}" y1="{scale_y(70):.1f}" x2="{pad_l+60}" y2="{scale_y(70):.1f}" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="{pad_l+65}" y="{scale_y(70)+4:.1f}" font-size="9" fill="#4ade80">70% target</text>
+</svg>"""
+
+            st.markdown(svg, unsafe_allow_html=True)
+            st.write("")
+
+            # Day-by-day table
+            st.markdown("#### Day-by-Day Log")
+            # Header
+            st.markdown(
+                "<div style='display:grid;grid-template-columns:100px 70px 60px 60px 80px 80px;gap:4px;"
+                "font-size:11px;color:#475569;font-family:DM Mono,monospace;padding:6px 10px;"
+                "border-bottom:1px solid #1e293b;text-transform:uppercase;letter-spacing:1px;'>"
+                "<span>Date</span><span>Win Rate</span><span>Wins</span><span>Losses</span>"
+                "<span>Picks</span><span>Mode</span></div>",
+                unsafe_allow_html=True
+            )
+            for r in reversed(history[-30:]):   # show last 30, most recent first
+                wr_c = "#4ade80" if r["win_rate"]>=70 else "#f97316" if r["win_rate"]>=50 else "#ef4444"
+                mode = "🎯 Sniper" if r.get("sniper") else "Standard"
+                st.markdown(
+                    f"<div style='display:grid;grid-template-columns:100px 70px 60px 60px 80px 80px;"
+                    f"gap:4px;font-size:12px;padding:7px 10px;border-bottom:1px solid #0d1520;"
+                    f"align-items:center;'>"
+                    f"<span style='color:#94a3b8;font-family:DM Mono,monospace;'>{r['date']}</span>"
+                    f"<span style='color:{wr_c};font-weight:700;font-family:DM Mono,monospace;'>{r['win_rate']}%</span>"
+                    f"<span style='color:#4ade80;'>+{r['wins']}</span>"
+                    f"<span style='color:#f87171;'>-{r['losses']}</span>"
+                    f"<span style='color:#64748b;'>{r['picks']}</span>"
+                    f"<span style='color:#475569;font-size:11px;'>{mode}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+    # ══ SUB-TAB 3: Per-Market History ════════════════════════════════════════
+    with acc_t3:
+        if not history:
+            st.markdown("<div class='empty-state'><div class='empty-state-icon'>🎯</div><div class='empty-state-text'>No history yet</div></div>",unsafe_allow_html=True)
+        else:
+            mkt_data = market_totals(history)
+            if not mkt_data:
+                st.info("Market breakdown data not available in older records.")
+            else:
+                st.markdown("#### All-Time Performance by Market")
+                st.markdown(f"<div style='color:#475569;font-size:13px;margin-bottom:16px;'>Based on {len(history)} days of recorded data</div>",unsafe_allow_html=True)
+
+                # Sort by win rate descending
+                sorted_mkts = sorted(mkt_data.items(),
+                                     key=lambda x: x[1]['w']/(x[1]['w']+x[1]['l'])
+                                     if x[1]['w']+x[1]['l'] else 0, reverse=True)
+
+                mkt_icons = {
+                    "goals":"⚽","under_goals":"🔒","corners":"🔥","under_corners":"🛡️",
+                    "cards":"🟨","under_cards":"🧊","sot":"🎯","under_sot":"🧱"
+                }
+                for mkt, rec in sorted_mkts:
+                    tc  = rec['w'] + rec['l']
+                    if tc == 0: continue
+                    pct = rec['w']/tc*100
+                    c   = "#16a34a" if pct>=70 else "#f97316" if pct>=50 else "#ef4444"
+                    icon = mkt_icons.get(mkt, "📊")
+                    label = mkt.replace("_"," ").title()
+                    # Expectation box
+                    expected = "✅ Profitable" if pct>=70 else "⚠️ Marginal" if pct>=55 else "❌ Underperforming"
+                    st.markdown(
+                        f"<div style='background:#09111c;border:1px solid #1e293b;border-radius:10px;"
+                        f"padding:14px 18px;margin-bottom:10px;'>"
+                        f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'>"
+                        f"<span style='font-size:14px;font-weight:700;color:#e2e8f0;'>{icon} {label}</span>"
+                        f"<span style='font-family:DM Mono,monospace;font-size:13px;color:{c};font-weight:700;'>{pct:.1f}%</span>"
+                        f"</div>"
+                        f"<div class='conf-bar-bg' style='margin-bottom:8px;'>"
+                        f"<div class='conf-bar-fill' style='width:{int(pct)}%;background:{c};'></div></div>"
+                        f"<div style='display:flex;gap:16px;font-size:12px;color:#64748b;'>"
+                        f"<span>✅ {rec['w']} wins</span>"
+                        f"<span>❌ {rec['l']} losses</span>"
+                        f"<span>📊 {tc} total picks</span>"
+                        f"<span style='margin-left:auto;color:{c};font-weight:600;'>{expected}</span>"
+                        f"</div></div>",
+                        unsafe_allow_html=True
+                    )
+
+                # Best / worst market callout
+                best_mkt  = sorted_mkts[0]  if sorted_mkts else None
+                worst_mkt = sorted_mkts[-1] if len(sorted_mkts)>1 else None
+                if best_mkt and worst_mkt:
+                    bc1, bc2 = st.columns(2)
+                    bm_tc = best_mkt[1]['w']+best_mkt[1]['l']
+                    bm_wr = round(best_mkt[1]['w']/max(bm_tc,1)*100,1)
+                    wm_tc = worst_mkt[1]['w']+worst_mkt[1]['l']
+                    wm_wr = round(worst_mkt[1]['w']/max(wm_tc,1)*100,1)
+                    with bc1:
+                        st.markdown(
+                            f"<div style='background:#071a10;border:1px solid #166534;border-radius:10px;padding:14px;text-align:center;'>"
+                            f"<div style='font-size:11px;color:#4ade80;font-family:DM Mono,monospace;letter-spacing:1px;'>🏆 BEST MARKET</div>"
+                            f"<div style='font-size:20px;font-weight:800;color:#4ade80;margin:6px 0;'>"
+                            f"{mkt_icons.get(best_mkt[0],'📊')} {best_mkt[0].replace('_',' ').title()}</div>"
+                            f"<div style='font-size:24px;font-family:DM Mono,monospace;color:#4ade80;font-weight:700;'>{bm_wr}%</div>"
+                            f"<div style='font-size:11px;color:#2d5a3d;'>{bm_tc} picks</div></div>",
+                            unsafe_allow_html=True
+                        )
+                    with bc2:
+                        st.markdown(
+                            f"<div style='background:#1a0505;border:1px solid #7f1d1d;border-radius:10px;padding:14px;text-align:center;'>"
+                            f"<div style='font-size:11px;color:#f87171;font-family:DM Mono,monospace;letter-spacing:1px;'>⚠️ NEEDS WORK</div>"
+                            f"<div style='font-size:20px;font-weight:800;color:#f87171;margin:6px 0;'>"
+                            f"{mkt_icons.get(worst_mkt[0],'📊')} {worst_mkt[0].replace('_',' ').title()}</div>"
+                            f"<div style='font-size:24px;font-family:DM Mono,monospace;color:#f87171;font-weight:700;'>{wm_wr}%</div>"
+                            f"<div style='font-size:11px;color:#5a2d2d;'>{wm_tc} picks</div></div>",
+                            unsafe_allow_html=True
+                        )
+
+    # ══ SUB-TAB 4: Manage Records ════════════════════════════════════════════
+    with acc_t4:
+        st.markdown("#### ⚙️ Manage Accuracy Records")
+        col_dl, col_ul = st.columns(2)
+
+        with col_dl:
+            st.markdown("**📥 Export History**")
+            if history:
+                csv_str = history_to_csv(history)
+                st.download_button(
+                    label=f"⬇️ Download {len(history)} days as CSV",
+                    data=csv_str,
+                    file_name=f"quant_radar_accuracy_{today_str}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+                # Also offer JSON
+                json_str = json.dumps(history, indent=2)
+                st.download_button(
+                    label="⬇️ Download full JSON backup",
+                    data=json_str,
+                    file_name=f"quant_radar_backup_{today_str}.json",
+                    mime="application/json",
+                    use_container_width=True
+                )
+            else:
+                st.info("No history to export yet.")
+
+        with col_ul:
+            st.markdown("**📤 Import / Restore History**")
+            uploaded = st.file_uploader("Upload a JSON backup file", type=["json"])
+            if uploaded:
+                try:
+                    imported = json.load(uploaded)
+                    if isinstance(imported, list) and all("date" in r for r in imported):
+                        save_history(imported)
+                        st.success(f"✅ Restored {len(imported)} days of history!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Invalid format — must be a JSON list with 'date' fields")
+                except Exception as e:
+                    st.error(f"❌ Import failed: {e}")
+
+        st.divider()
+        st.markdown("**🗑️ Clear Records**")
+        col_warn, col_btn = st.columns([3, 1])
+        with col_warn:
+            st.markdown("<div class='warning-box'>⚠️ This permanently deletes all accuracy history. Export a backup first.</div>",unsafe_allow_html=True)
+        with col_btn:
+            if st.button("🗑️ Clear All", use_container_width=True):
+                save_history([])
+                st.success("History cleared.")
+                st.rerun()
+
+        # Summary stats at bottom
+        if history:
+            st.divider()
+            st.markdown(f"**📊 Database Stats:** {len(history)} days recorded · "
+                        f"Oldest: {history[0]['date']} · "
+                        f"Latest: {history[-1]['date']} · "
+                        f"File: `{HISTORY_FILE}`")
 
 # ══ TAB 5 ═════════════════════════════════════════════════════════════════════
 with tab5:
