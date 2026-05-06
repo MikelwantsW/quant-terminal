@@ -11,6 +11,34 @@ st.markdown("""
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&family=Inter:wght@400;500;600&display=swap');
 .stApp { background-color: #080d14 !important; color: #e2e8f0 !important; font-family: 'Inter', sans-serif; }
 section[data-testid="stSidebar"] { background-color: #0d1520 !important; border-right: 1px solid #1e293b; }
+/* ── Sidebar text & controls — fully visible ── */
+section[data-testid="stSidebar"] * { color: #cbd5e1 !important; }
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] p { color: #e2e8f0 !important; font-weight: 600; }
+section[data-testid="stSidebar"] .stMarkdown p { color: #94a3b8 !important; font-size: 13px; }
+/* Toggles */
+section[data-testid="stSidebar"] [data-testid="stToggleLabel"] { color: #e2e8f0 !important; font-size: 13px !important; font-weight: 600 !important; }
+section[data-testid="stSidebar"] [role="switch"] { background-color: #1e293b !important; border-color: #334155 !important; }
+section[data-testid="stSidebar"] [role="switch"][aria-checked="true"] { background-color: #16a34a !important; border-color: #16a34a !important; }
+/* Checkboxes */
+section[data-testid="stSidebar"] [data-testid="stCheckbox"] label,
+section[data-testid="stSidebar"] [data-testid="stCheckbox"] span { color: #cbd5e1 !important; font-size: 13px !important; font-weight: 500 !important; }
+section[data-testid="stSidebar"] [data-baseweb="checkbox"] div { border-color: #334155 !important; background-color: #1e293b !important; }
+section[data-testid="stSidebar"] [data-baseweb="checkbox"][aria-checked="true"] div { background-color: #16a34a !important; border-color: #16a34a !important; }
+/* Slider */
+section[data-testid="stSidebar"] [data-testid="stSlider"] label { color: #e2e8f0 !important; font-size: 13px !important; font-weight: 600 !important; }
+section[data-testid="stSidebar"] [data-testid="stSlider"] [data-baseweb="slider"] div { background-color: #334155 !important; }
+section[data-testid="stSidebar"] [data-testid="stSlider"] [data-baseweb="slider"] div[role="slider"] { background-color: #16a34a !important; border-color: #16a34a !important; }
+/* Number input */
+section[data-testid="stSidebar"] [data-testid="stNumberInput"] label { color: #e2e8f0 !important; font-size: 13px !important; font-weight: 600 !important; }
+section[data-testid="stSidebar"] [data-testid="stNumberInput"] input { background-color: #1e293b !important; color: #e2e8f0 !important; border-color: #334155 !important; border-radius: 6px !important; }
+/* Divider */
+section[data-testid="stSidebar"] hr { border-color: #1e293b !important; }
+/* Success / info boxes inside sidebar */
+section[data-testid="stSidebar"] [data-testid="stAlert"] { background-color: #0d2218 !important; border-color: #16a34a !important; color: #4ade80 !important; }
 .stTabs [data-baseweb="tab-list"] { background: #0d1520; border-radius: 10px; padding: 6px; gap: 6px; border: 1px solid #1e293b; }
 .stTabs [data-baseweb="tab"] { color: #64748b; font-weight: 600; font-size: 13px; padding: 10px 18px; border-radius: 7px; }
 .stTabs [aria-selected="true"] { background: linear-gradient(135deg, #16a34a, #15803d) !important; color: white !important; box-shadow: 0 4px 12px rgba(22,163,74,0.35); }
@@ -1710,7 +1738,7 @@ with tab3:
                     weather_impact = {"g_mult":1.0,"c_mult":1.0,"k_mult":1.0,"s_mult":1.0,"conf_bonus":0.0,"available":False,"badge_html":""}
                     if stadium_coords:
                         raw_wx = fetch_weather(stadium_coords[0], stadium_coords[1],
-                                               m.get("match_date",today_str), t_m)
+                                               m.get("match_date", today_str), t)
                         weather_impact = compute_weather_impact(raw_wx)
 
                     pick,p_type,thresh,conf,sigs,all_plays=generate_ai_pick(
