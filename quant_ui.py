@@ -130,52 +130,266 @@ SPORTSBOOK_TIER_C = {
 }
 TOP_LEAGUES = SPORTSBOOK_TIER_A | SPORTSBOOK_TIER_B | SPORTSBOOK_TIER_C
 
-# Fuzzy league matcher — handles API name drift without hard-coding every variant
+# ── STRICT ALLOWED COUNTRY PREFIXES ──────────────────────────────────────────
+# Only leagues from these countries/competitions are allowed through.
+# This is the hard gate that stops Egyptian, Ethiopian, Romanian etc. leaking in.
+ALLOWED_COUNTRY_KEYWORDS = {
+    # Competitions
+    "uefa","champions league","europa league","conference league",
+    # Big 5 countries
+    "england","english","premier league","championship",
+    "spain","spanish","la liga",
+    "germany","german","bundesliga",
+    "italy","italian","serie a",
+    "france","french","ligue 1",
+    # Tier B countries
+    "netherlands","dutch","eredivisie",
+    "portugal","portuguese","primeira liga",
+    "turkey","turkish","süper lig","super lig",
+    "scotland","scottish",
+    "belgium","belgian",
+    "switzerland","swiss",
+    "austria","austrian",
+    "sweden","swedish","allsvenskan",
+    "norway","norwegian","eliteserien",
+    "denmark","danish","superliga",
+    "usa","american","mls",
+    "brazil","brazilian","brasileirao",
+    "argentina","argentine",
+    # Tier C countries
+    "finland","veikkausliiga",
+    "serbia","serbian",
+    "greece","greek",
+    "czech",
+    "poland","polish","ekstraklasa",
+    "saudi",
+    "japan","j1 league","j-league",
+}
+
+# Fuzzy map — only called AFTER country whitelist check passes
 _FUZZY_MAP = {
-    # keywords → canonical name
-    "ligue 1":          "Ligue 1",
-    "premier league":   "Premier League",
-    "la liga":          "La Liga",
-    "primera division": "La Liga",
-    "serie a":          "Serie A",
-    "bundesliga":       "Bundesliga",
-    "champions league": "UEFA Champions League",
-    "europa league":    "UEFA Europa League",
-    "conference league":"UEFA Europa Conference League",
-    "championship":     "Championship",
-    "eredivisie":       "Eredivisie",
-    "primeira liga":    "Primeira Liga",
-    "süper lig":        "Süper Lig",
-    "super lig":        "Süper Lig",
-    "scottish":         "Scottish Premiership",
-    "allsvenskan":      "Allsvenskan",
-    "eliteserien":      "Eliteserien",
-    "superliga":        "Superliga",
-    "mls":              "Major League Soccer",
-    "brasileirao":      "Brasileirao Serie A",
-    "brazil serie a":   "Brasileirao Serie A",
-    "argentina":        "Argentine Primera División",
-    "veikkausliiga":    "Veikkausliiga",
-    "serbian":          "Serbian SuperLiga",
-    "greek":            "Greek Super League",
-    "czech":            "Czech First League",
-    "ekstraklasa":      "Polish Ekstraklasa",
-    "saudi":            "Saudi Pro League",
-    "j1 league":        "J1 League",
-    "belgian":          "Belgian Pro League",
-    "swiss":            "Swiss Super League",
-    "austrian":         "Austrian Football Bundesliga",
+    "ligue 1":           "Ligue 1",
+    "premier league":    "Premier League",
+    "la liga":           "La Liga",
+    "primera division":  "La Liga",
+    "serie a":           "Serie A",
+    "bundesliga":        "Bundesliga",
+    "champions league":  "UEFA Champions League",
+    "europa league":     "UEFA Europa League",
+    "conference league": "UEFA Europa Conference League",
+    "eredivisie":        "Eredivisie",
+    "primeira liga":     "Primeira Liga",
+    "süper lig":         "Süper Lig",
+    "super lig":         "Süper Lig",
+    "scottish premiership": "Scottish Premiership",
+    "allsvenskan":       "Allsvenskan",
+    "eliteserien":       "Eliteserien",
+    "superliga":         "Superliga",
+    "mls":               "Major League Soccer",
+    "brasileirao":       "Brasileirao Serie A",
+    "brazil serie a":    "Brasileirao Serie A",
+    "argentina primera": "Argentine Primera División",
+    "veikkausliiga":     "Veikkausliiga",
+    "serbian superliga": "Serbian SuperLiga",
+    "greek super":       "Greek Super League",
+    "czech first":       "Czech First League",
+    "ekstraklasa":       "Polish Ekstraklasa",
+    "saudi pro":         "Saudi Pro League",
+    "j1 league":         "J1 League",
+    "belgian pro":       "Belgian Pro League",
+    "swiss super":       "Swiss Super League",
+    "austrian":          "Austrian Football Bundesliga",
+    # English Championship — must match EXACTLY, not "Romanian Championship"
+    "english championship": "Championship",
+    "england championship": "Championship",
+}
+
+# Explicit BLOCK list — leagues whose names partially match allowed keywords
+# but are NOT on major sportsbooks
+BLOCKED_LEAGUE_KEYWORDS = {
+    "egypt","egyptian","ethiopia","ethiopian","mauritania","mauritanian",
+    "romania","romanian","israel","israeli","algeria","algerian",
+    "morocco","moroccan","tunisia","tunisian","iran","iranian",
+    "iraq","iraqi","kenya","kenyan","ghana","ghanaian",
+    "cameroon","zimbabwe","zambia","tanzania","uganda",
+    "south africa","nigerian","nigeria","senegal","ivory coast",
+    "angola","congo","mali","guinea","liberia","sierra leone",
+    "uae","qatar","kuwait","bahrain","oman","jordan","lebanon",
+    "uzbekistan","kazakhstan","azerbaijan","armenia","georgia",
+    "vietnam","indonesia","malaysia","thailand","south korea","china",
+    "india","pakistan","bangladesh","philippines","myanmar",
+    "mexico","colombia","chile","peru","ecuador","venezuela","bolivia",
+    "paraguay","uruguay","costa rica","honduras","guatemala",
+    "scotland a league","highland","lowland",
+    "amateur","reserve","u21","u23","u19","u18","youth","women","w league",
+    "second division","third division","division 2","division 3",
+    "liga 2","liga 3","serie b","serie c","division b",
+    "ligue 2","championship 2","primeira b",
 }
 
 def canonical_league(name: str) -> str:
-    """Return the canonical league name, handling API naming variations."""
+    """
+    Return canonical league name or original if unknown.
+    STRICT: blocks unrecognised countries, youth/amateur leagues, lower divisions.
+    """
     if name in TOP_LEAGUES:
-        return name          # exact match — fast path
+        return name   # exact match — fast path
+
     low = name.lower()
-    for keyword, canonical in _FUZZY_MAP.items():
+
+    # Hard block — reject immediately if a blocked keyword appears
+    for bkw in BLOCKED_LEAGUE_KEYWORDS:
+        if bkw in low:
+            return "__BLOCKED__"
+
+    # Must contain at least one allowed country/competition keyword
+    has_allowed = any(akw in low for akw in ALLOWED_COUNTRY_KEYWORDS)
+    if not has_allowed:
+        return "__BLOCKED__"
+
+    # Try fuzzy map (more specific phrases first — sort by length descending)
+    for keyword, canonical in sorted(_FUZZY_MAP.items(), key=lambda x: -len(x[0])):
         if keyword in low:
             return canonical
-    return name              # unknown — return as-is (will be filtered out)
+
+    # No match — block it
+    return "__BLOCKED__"
+
+# ── CORNER INTELLIGENCE DATABASE ─────────────────────────────────────────────
+# Players who directly influence corner counts.
+# corner_mult_playing : multiply proj_c by this when confirmed in lineup
+# corner_mult_absent  : multiply proj_c by this when confirmed NOT in lineup
+# role                : why they matter for corners
+CORNER_PLAYERS = {
+    # ── Premier League corner engines ─────────────────────────────────────────
+    "Trent Alexander-Arnold": {
+        "team":"Liverpool","corner_mult_playing":1.22,"corner_mult_absent":0.82,
+        "role":"Primary corner taker + crosses","side":"home"},
+    "Andrew Robertson": {
+        "team":"Liverpool","corner_mult_playing":1.12,"corner_mult_absent":0.90,
+        "role":"Wide crosses force corners","side":"home"},
+    "Kevin De Bruyne": {
+        "team":"Manchester City","corner_mult_playing":1.20,"corner_mult_absent":0.80,
+        "role":"Set piece taker, corner deliverer","side":"home"},
+    "Bukayo Saka": {
+        "team":"Arsenal","corner_mult_playing":1.18,"corner_mult_absent":0.85,
+        "role":"Wide attacker constantly forcing corners","side":"home"},
+    "Mohamed Salah": {
+        "team":"Liverpool","corner_mult_playing":1.14,"corner_mult_absent":0.88,
+        "role":"Wide runs, beats fullbacks for corners","side":"home"},
+    "Phil Foden": {
+        "team":"Manchester City","corner_mult_playing":1.12,"corner_mult_absent":0.90,
+        "role":"Wide/half-space runner generates corners","side":"home"},
+    "Bruno Fernandes": {
+        "team":"Manchester United","corner_mult_playing":1.15,"corner_mult_absent":0.86,
+        "role":"Set piece taker, corner deliverer","side":"home"},
+    "Cole Palmer": {
+        "team":"Chelsea","corner_mult_playing":1.13,"corner_mult_absent":0.89,
+        "role":"Set pieces and wide movement","side":"home"},
+    "Pedro Neto": {
+        "team":"Chelsea","corner_mult_playing":1.10,"corner_mult_absent":0.92,
+        "role":"Direct winger, forces corners","side":"home"},
+    "Jarrod Bowen": {
+        "team":"West Ham","corner_mult_playing":1.12,"corner_mult_absent":0.90,
+        "role":"Wide attacker, high corner involvement","side":"home"},
+    # ── La Liga ────────────────────────────────────────────────────────────────
+    "Vinicius Jr": {
+        "team":"Real Madrid","corner_mult_playing":1.20,"corner_mult_absent":0.82,
+        "role":"Direct winger, beats defenders for corners","side":"home"},
+    "Lamine Yamal": {
+        "team":"Barcelona","corner_mult_playing":1.16,"corner_mult_absent":0.86,
+        "role":"Wide attacker, corner generator","side":"home"},
+    "Raphinha": {
+        "team":"Barcelona","corner_mult_playing":1.18,"corner_mult_absent":0.84,
+        "role":"Corner taker + wide pressure","side":"home"},
+    "Federico Valverde": {
+        "team":"Real Madrid","corner_mult_playing":1.08,"corner_mult_absent":0.93,
+        "role":"Wide runs in transition","side":"home"},
+    "Dani Carvajal": {
+        "team":"Real Madrid","corner_mult_playing":1.10,"corner_mult_absent":0.92,
+        "role":"Overlapping fullback, cross deliverer","side":"home"},
+    # ── Bundesliga ─────────────────────────────────────────────────────────────
+    "Florian Wirtz": {
+        "team":"Bayer Leverkusen","corner_mult_playing":1.14,"corner_mult_absent":0.88,
+        "role":"Set piece taker, creates corners","side":"home"},
+    "Leroy Sané": {
+        "team":"Bayern Munich","corner_mult_playing":1.12,"corner_mult_absent":0.90,
+        "role":"Wide attacker, direct runner","side":"home"},
+    "Kingsley Coman": {
+        "team":"Bayern Munich","corner_mult_playing":1.11,"corner_mult_absent":0.91,
+        "role":"Wide, pace-based corner generator","side":"home"},
+    "Karim Adeyemi": {
+        "team":"Borussia Dortmund","corner_mult_playing":1.13,"corner_mult_absent":0.89,
+        "role":"Fast wide attacker","side":"home"},
+    # ── Serie A ────────────────────────────────────────────────────────────────
+    "Federico Chiesa": {
+        "team":"Inter Milan","corner_mult_playing":1.12,"corner_mult_absent":0.90,
+        "role":"Wide attacker generates corners","side":"home"},
+    "Khvicha Kvaratskhelia": {
+        "team":"PSG","corner_mult_playing":1.15,"corner_mult_absent":0.87,
+        "role":"Direct dribbler, forces corner situations","side":"home"},
+    "Matteo Darmian": {
+        "team":"Inter Milan","corner_mult_playing":1.08,"corner_mult_absent":0.94,
+        "role":"Overlapping wing-back","side":"home"},
+    # ── Ligue 1 ────────────────────────────────────────────────────────────────
+    "Ousmane Dembélé": {
+        "team":"PSG","corner_mult_playing":1.18,"corner_mult_absent":0.83,
+        "role":"Direct winger, one of the best corner generators in Europe","side":"home"},
+    "Bradley Barcola": {
+        "team":"PSG","corner_mult_playing":1.14,"corner_mult_absent":0.88,
+        "role":"Fast wide attacker, beats fullbacks","side":"home"},
+    "Amine Gouiri": {
+        "team":"Rennes","corner_mult_playing":1.10,"corner_mult_absent":0.92,
+        "role":"Wide threat, corner involvement","side":"home"},
+    # ── Absent = under corners specialists ────────────────────────────────────
+    # When these defensive/controlling players are absent, teams lose shape
+    # and actually concede MORE corners (their absence hurts defensive shape)
+    "Rodri": {
+        "team":"Manchester City","corner_mult_playing":0.95,"corner_mult_absent":1.05,
+        "role":"Controls tempo — absence leads to more open play = more corners","side":"home"},
+}
+
+def get_corner_intel(match_id: str, home_name: str, away_name: str, confirmed_names: set) -> tuple:
+    """
+    Returns (corner_multiplier, intel_details_list).
+    corner_multiplier: float to multiply proj_c by (based on confirmed lineup)
+    intel_details: list of (player_name, status, role, mult) for display
+    """
+    mult = 1.0
+    details = []
+    lineups_available = len(confirmed_names) > 0
+
+    for pname, pdata in CORNER_PLAYERS.items():
+        team = pdata["team"]
+        # Only relevant if this player's club is in today's match
+        in_home = team.lower() in home_name.lower()
+        in_away = team.lower() in away_name.lower()
+        if not in_home and not in_away:
+            continue
+
+        if lineups_available:
+            # Check if player is in confirmed lineup
+            is_playing = any(
+                pname.split()[-1].lower() in c.lower() or
+                pname.split()[0].lower() in c.lower()
+                for c in confirmed_names
+            )
+            if is_playing:
+                mult *= pdata["corner_mult_playing"]
+                details.append((pname, "playing", pdata["role"],
+                                pdata["corner_mult_playing"], "home" if in_home else "away"))
+            else:
+                # Key corner player NOT in lineup
+                mult *= pdata["corner_mult_absent"]
+                details.append((pname, "absent", pdata["role"],
+                                pdata["corner_mult_absent"], "home" if in_home else "away"))
+        else:
+            # Lineup not yet available — flag as unconfirmed
+            details.append((pname, "unconfirmed", pdata["role"],
+                            pdata["corner_mult_playing"], "home" if in_home else "away"))
+
+    return round(mult, 3), details
+
 
 LEAGUE_PROFILE = {
     "La Liga":(0.90,0.85,1.05,0.0),"Serie A":(0.88,0.92,1.10,0.0),
@@ -452,6 +666,32 @@ def fetch_stats(team_id,venue):
     except: return None,0
 
 @st.cache_data(ttl=300,show_spinner=False)
+def fetch_lineups_for_match(match_id: str) -> set:
+    """
+    Fetch confirmed starting lineup names for a match.
+    Returns a set of player name strings (empty set if not yet available).
+    Cached 5 minutes — lineups change close to kickoff.
+    """
+    url = f"https://apiv3.apifootball.com/?action=get_lineups&match_id={match_id}&APIkey={API_KEY}"
+    try:
+        res = requests.get(url, timeout=8).json()
+        names = set()
+        # API returns dict keyed by match_id or a list
+        data = res.get(str(match_id), res) if isinstance(res, dict) else {}
+        for side in ["lineup_home","lineup_away"]:
+            side_data = data.get(side, {})
+            if isinstance(side_data, dict):
+                for pos_group in side_data.values():
+                    if isinstance(pos_group, list):
+                        for p in pos_group:
+                            n = p.get("player","") if isinstance(p,dict) else str(p)
+                            if n: names.add(n.strip())
+        return names
+    except:
+        return set()
+
+
+@st.cache_data(ttl=300,show_spinner=False)
 def fetch_events(date_from,date_to):
     url=f"https://apiv3.apifootball.com/?action=get_events&from={date_from}&to={date_to}&APIkey={API_KEY}"
     try:
@@ -461,7 +701,7 @@ def fetch_events(date_from,date_to):
             for m in res:
                 raw_lg = m.get("league_name","")
                 canon  = canonical_league(raw_lg)
-                if canon in TOP_LEAGUES:
+                if canon != "__BLOCKED__" and canon in TOP_LEAGUES:
                     m["league_name"] = canon   # normalise in-place
                     out.append(m)
             return out
@@ -469,11 +709,12 @@ def fetch_events(date_from,date_to):
     except: return []
 
 # ── EDGE ENGINE ───────────────────────────────────────────────────────────────
-def generate_ai_pick(h_st,a_st,league,sniper_mode=False,h_cnt=5,a_cnt=5):
+def generate_ai_pick(h_st,a_st,league,sniper_mode=False,h_cnt=5,a_cnt=5,**kwargs):
     gm,cm,kdm,conf_pen=LEAGUE_PROFILE.get(league,DEFAULT_PROFILE)
     markets = available_markets(league)  # which markets exist on books for this league
     proj_g=(((h_st['gf']+a_st['ga'])/2)+((a_st['gf']+h_st['ga'])/2))*gm
-    proj_c=(((h_st['cf']+a_st['ca'])/2)+((a_st['cf']+h_st['ca'])/2))*cm
+    proj_c_raw=(((h_st['cf']+a_st['ca'])/2)+((a_st['cf']+h_st['ca'])/2))*cm
+    proj_c = min(proj_c_raw, 13.0)  # hard cap — prevents garbage data inflating corner lines
     proj_sot=((h_st['sotf']+a_st['sota'])/2)+((a_st['sotf']+h_st['sota'])/2)
     proj_cd=(h_st['cards']+a_st['cards'])*kdm
     sigs={
@@ -509,18 +750,72 @@ def generate_ai_pick(h_st,a_st,league,sniper_mode=False,h_cnt=5,a_cnt=5):
                 plays.append((f"🔒 Under {line} Goals","under_goals",line,conf,{k:v for k,v in sigs.items() if k in ("SOT confirms under","Low corners","Low SOT")}))
 
     if "corners" in markets and avg_cnt >= min_sample_exotic:
-        if proj_c>=10.0:
-            valid=[l for l in [8.5,9.5,10.5,11.5,12.5,13.5] if l<=proj_c-1.8]
-            if valid:
-                line=max(valid);gap=proj_c-line;conf=min(99.0,base+(gap/max(line,.01))*75)
-                if sigs["High SOT"]: conf=min(99.0,conf+4)
-                plays.append((f"🔥 Over {line} Corners","corners",line,conf,{k:v for k,v in sigs.items() if k in ("High SOT","High scoring")}))
-        elif proj_c<=8.0:
-            valid=[l for l in [6.5,7.5,8.5,9.5] if l>=proj_c+1.8]
-            if valid:
-                line=min(valid);gap=line-proj_c;conf=min(99.0,base+(gap/max(line,.01))*75)
-                if sigs["Low SOT"]: conf=min(99.0,conf+4)
-                plays.append((f"🛡️ Under {line} Corners","under_corners",line,conf,{k:v for k,v in sigs.items() if k in ("Low SOT","Low scoring")}))
+        # ── CORNER ENGINE v3: Player-aware, reality-capped ────────────────────
+        #
+        # Line philosophy (based on real hit rates):
+        #   Over 8.5 corners  → needs 9+  corners → hits ~62% of PL games naturally
+        #   Over 9.5 corners  → needs 10+ corners → hits ~50% — needs clear signal
+        #   HARD CAP: max Over line = 9.5.  No more 10.5, 11.5, 13.5 nonsense.
+        #
+        # Player intel gate:
+        #   - If lineup available and NO corner-specialist is confirmed playing → SKIP
+        #   - If a key corner player is absent → apply absence multiplier, may drop below threshold
+        #   - If 2+ corner specialists confirmed playing → confidence bonus
+
+        # Step 1: Apply player-intel corner multiplier if available
+        corner_player_mult = kwargs.get("c_mult", 1.0)
+        corner_intel       = kwargs.get("corner_intel", [])
+        players_confirmed  = kwargs.get("lineups_available", False)
+
+        proj_c_adj = min(proj_c * corner_player_mult, 12.0)  # hard cap at 12
+
+        # Step 2: Count confirmed corner specialists playing/absent
+        specialists_playing = [d for d in corner_intel if d[1] == "playing"]
+        specialists_absent  = [d for d in corner_intel if d[1] == "absent"]
+        has_specialist      = len(specialists_playing) > 0
+
+        # Step 3: Player intel gate for Over corners
+        # If lineups are confirmed but NO corner specialist is playing → skip pick
+        # (base stats alone are not enough for corners — they are player-dependent)
+        corner_gate_passed = (not players_confirmed) or has_specialist or (len(corner_intel) == 0)
+
+        # Step 4: Confidence modifiers
+        specialist_bonus = min(8.0, len(specialists_playing) * 3.5)   # +3.5% per specialist
+        absence_penalty  = min(10.0, len(specialists_absent) * 4.0)   # -4% per absent specialist
+
+        corner_base_conf = base + specialist_bonus - absence_penalty
+
+        # ── OVER CORNERS ──────────────────────────────────────────────────────
+        if proj_c_adj >= 9.5 and corner_gate_passed:
+            # Offer 8.5 when projection is 9.5–10.9, 9.5 when projection is 11+
+            if proj_c_adj >= 11.0:
+                line = 9.5
+            else:
+                line = 8.5
+            gap = proj_c_adj - line
+            if gap >= 2.0:  # need at least 2.0 margin above line
+                conf = min(99.0, corner_base_conf + (gap / max(line, .01)) * 70)
+                if sigs["High SOT"]: conf = min(99.0, conf + 4)
+                sigs_corner = {k:v for k,v in sigs.items() if k in ("High SOT","High scoring")}
+                if has_specialist:
+                    sigs_corner["Corner specialist playing"] = True
+                plays.append((f"🔥 Over {line} Corners","corners",line,conf,sigs_corner))
+
+        # ── UNDER CORNERS ─────────────────────────────────────────────────────
+        elif proj_c_adj <= 7.5:
+            # Under 8.5 when projection ≤ 7.5 (plenty of margin)
+            line = 8.5
+            gap = line - proj_c_adj
+            if gap >= 2.0:
+                conf = min(99.0, corner_base_conf + (gap / max(line, .01)) * 70)
+                if sigs["Low SOT"]: conf = min(99.0, conf + 4)
+                # Under corners STRENGTHENS when key wide players are absent
+                if specialists_absent:
+                    conf = min(99.0, conf + absence_penalty * 0.5)
+                sigs_corner = {k:v for k,v in sigs.items() if k in ("Low SOT","Low scoring")}
+                if specialists_absent:
+                    sigs_corner["Key wide player absent"] = True
+                plays.append((f"🛡️ Under 8.5 Corners","under_corners",8.5,conf,sigs_corner))
 
     if "cards" in markets and avg_cnt >= min_sample_exotic:
         if proj_cd>=5.0:
@@ -741,11 +1036,51 @@ with tab3:
                         a_st,a_cnt=fetch_stats(m.get("match_awayteam_id"),"away")
                     if not h_st or not a_st: st.warning("⚠️ Insufficient data."); continue
                     if h_cnt<3 or a_cnt<3: st.info(f"📉 Low sample: {home}({h_cnt}) / {away}({a_cnt})")
-                    pick,p_type,thresh,conf,sigs,all_plays=generate_ai_pick(h_st,a_st,l_name,sniper_mode,h_cnt,a_cnt)
+                    # Fetch lineups for corner intelligence
+                    confirmed_names = fetch_lineups_for_match(m.get("match_id",""))
+                    c_mult_val, corner_intel_data = get_corner_intel(
+                        m.get("match_id",""), home, away, confirmed_names)
+                    lineups_ready = len(confirmed_names) > 0
+
+                    pick,p_type,thresh,conf,sigs,all_plays=generate_ai_pick(
+                        h_st,a_st,l_name,sniper_mode,h_cnt,a_cnt,
+                        c_mult=c_mult_val,
+                        corner_intel=corner_intel_data,
+                        lineups_available=lineups_ready
+                    )
                     avail_mkts = available_markets(l_name)
                     mkt_icons  = {"goals":"⚽ Goals","corners":"🔥 Corners","cards":"🟨 Cards","sot":"🎯 SOT"}
                     mkt_tags   = " ".join(f"<span style='font-size:10px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.25);padding:2px 6px;border-radius:8px;font-family:DM Mono,monospace;'>{mkt_icons[k]}</span>" for k in mkt_icons if k in avail_mkts)
                     ref=m.get("match_referee","")
+
+                    # Build corner intel HTML panel
+                    corner_panel_html = ""
+                    if corner_intel_data:
+                        rows = ""
+                        for cname, cstatus, crole, cmult, cside in corner_intel_data[:6]:
+                            if cstatus == "playing":
+                                tag = f"<span style='background:rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.3);padding:2px 7px;border-radius:8px;font-size:10px;font-family:DM Mono,monospace;font-weight:700;'>▶ PLAYING</span>"
+                                mult_col = f"<span style='color:#4ade80;font-family:DM Mono,monospace;font-size:11px;font-weight:700;'>×{cmult:.2f} corners</span>"
+                            elif cstatus == "absent":
+                                tag = f"<span style='background:rgba(239,68,68,.1);color:#f87171;border:1px solid rgba(239,68,68,.25);padding:2px 7px;border-radius:8px;font-size:10px;font-family:DM Mono,monospace;font-weight:700;'>✗ ABSENT</span>"
+                                mult_col = f"<span style='color:#f87171;font-family:DM Mono,monospace;font-size:11px;font-weight:700;'>×{cmult:.2f} corners</span>"
+                            else:
+                                tag = f"<span style='background:rgba(251,191,36,.1);color:#fbbf24;border:1px solid rgba(251,191,36,.25);padding:2px 7px;border-radius:8px;font-size:10px;font-family:DM Mono,monospace;font-weight:700;'>? UNCONFIRMED</span>"
+                                mult_col = f"<span style='color:#fbbf24;font-family:DM Mono,monospace;font-size:11px;'>lineup pending</span>"
+                            rows += f"<div style='display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #09111c;'><span style='color:#e2e8f0;font-weight:600;font-size:12px;flex:1;'>{cname}</span><span style='color:#4b6080;font-size:11px;'>{cside.upper()}</span>{tag}{mult_col}</div>"
+
+                        lineup_status = "✅ Lineups confirmed" if lineups_ready else "⏳ Lineup pending (using base stats)"
+                        ls_color = "#4ade80" if lineups_ready else "#fbbf24"
+                        corner_panel_html = f"""
+                        <div style='background:linear-gradient(135deg,#060b18,#080d20);border:1px solid #1e3a5f;border-radius:10px;padding:14px;margin-top:10px;'>
+                            <div style='font-family:DM Mono,monospace;font-size:10px;color:#60a5fa;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;'>
+                                🔲 Corner Intelligence &nbsp;<span style='color:{ls_color};font-size:10px;'>{lineup_status}</span>
+                            </div>
+                            {rows}
+                            <div style='margin-top:8px;font-family:DM Mono,monospace;font-size:11px;color:#334d66;'>
+                                Combined corner multiplier: <span style='color:#e2e8f0;font-weight:700;'>×{c_mult_val:.2f}</span>
+                            </div>
+                        </div>"""
                     ref_html=f"<a href='https://www.google.com/search?q={ref.replace(' ','+')}+referee+stats' target='_blank' class='ref-tag'>⚖️ {ref}</a>" if ref else "<span class='ref-tag'>⚖️ TBD</span>"
                     odds_key=f"odds_{m.get('match_id','')}"
                     if odds_key not in st.session_state: st.session_state[odds_key]=1.90
@@ -753,7 +1088,23 @@ with tab3:
                     with c_pick:
                         is_sniper=conf>=82; card_cls="sniper-card" if is_sniper else "pick-card"; lbl_cls="sniper-label" if is_sniper else "pick-label"
                         badge="<div class='sniper-badge'>🎯 SNIPER PICK</div>" if is_sniper else ""
-                        st.markdown(f"<div class='{card_cls}'>{badge}<div class='{lbl_cls}'>{pick}</div>{ref_html}{conf_bar_html(conf,'#f97316' if is_sniper else '#16a34a')}{signals_html(sigs)}<div style='margin-top:8px;'>{mkt_tags}</div></div>",unsafe_allow_html=True)
+                        st.markdown(
+                            f"<div class='{card_cls}'>{badge}"
+                            f"<div class='{lbl_cls}'>{pick}</div>"
+                            f"{ref_html}"
+                            f"{conf_bar_html(conf,'#f97316' if is_sniper else '#16a34a')}"
+                            f"{signals_html(sigs)}"
+                            f"<div style='margin-top:8px;'>{mkt_tags}</div>"
+                            f"</div>",
+                            unsafe_allow_html=True
+                        )
+                        # Corner intel panel (shown separately below the card)
+                        if corner_panel_html and ("corner" in p_type.lower() if p_type else False):
+                            st.markdown(corner_panel_html, unsafe_allow_html=True)
+                        elif corner_panel_html and corner_intel_data:
+                            # Show collapsed if corners not the main pick but intel exists
+                            with st.expander("🔲 Corner Intelligence", expanded=False):
+                                st.markdown(corner_panel_html, unsafe_allow_html=True)
                         user_odds=st.number_input("Enter bookmaker odds (decimal)",min_value=1.01,max_value=50.0,step=0.05,value=st.session_state[odds_key],key=odds_key)
                         if conf>0 and user_odds>1.0:
                             kelly_stake=kelly_fraction(conf_to_prob(conf),user_odds,kelly_divisor)
@@ -762,7 +1113,7 @@ with tab3:
                     with c_stats:
                         gm,cm,kdm,_=LEAGUE_PROFILE.get(l_name,DEFAULT_PROFILE)
                         pg=(((h_st['gf']+a_st['ga'])/2)+((a_st['gf']+h_st['ga'])/2))*gm
-                        pc=(((h_st['cf']+a_st['ca'])/2)+((a_st['cf']+h_st['ca'])/2))*cm
+                        pc=min(13.0,(((h_st['cf']+a_st['ca'])/2)+((a_st['cf']+h_st['ca'])/2))*cm)
                         pcd=(h_st['cards']+a_st['cards'])*kdm; psot=h_st['sotf']+a_st['sotf']
                         st.markdown(f"<div class='stats-panel'><div class='stats-title'>Math Edge</div><div class='stat-row'><span>xG (adj)</span><span class='stat-val'>{pg:.2f}</span></div><div class='stat-row'><span>Corners (adj)</span><span class='stat-val'>{pc:.1f}</span></div><div class='stat-row'><span>Cards (adj)</span><span class='stat-val'>{pcd:.1f}</span></div><div class='stat-row'><span>SOT</span><span class='stat-val'>{psot:.1f}</span></div><div class='stat-row'><span>Sample H/A</span><span class='stat-val'>{h_cnt}/{a_cnt}</span></div></div>",unsafe_allow_html=True)
                         if len(all_plays)>1:
