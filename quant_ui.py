@@ -255,140 +255,335 @@ def canonical_league(name: str) -> str:
     # No match — block it
     return "__BLOCKED__"
 
-# ── CORNER INTELLIGENCE DATABASE ─────────────────────────────────────────────
-# Players who directly influence corner counts.
-# corner_mult_playing : multiply proj_c by this when confirmed in lineup
-# corner_mult_absent  : multiply proj_c by this when confirmed NOT in lineup
-# role                : why they matter for corners
-CORNER_PLAYERS = {
-    # ── Premier League corner engines ─────────────────────────────────────────
-    "Trent Alexander-Arnold": {
-        "team":"Liverpool","corner_mult_playing":1.22,"corner_mult_absent":0.82,
-        "role":"Primary corner taker + crosses","side":"home"},
-    "Andrew Robertson": {
-        "team":"Liverpool","corner_mult_playing":1.12,"corner_mult_absent":0.90,
-        "role":"Wide crosses force corners","side":"home"},
-    "Kevin De Bruyne": {
-        "team":"Manchester City","corner_mult_playing":1.20,"corner_mult_absent":0.80,
-        "role":"Set piece taker, corner deliverer","side":"home"},
-    "Bukayo Saka": {
-        "team":"Arsenal","corner_mult_playing":1.18,"corner_mult_absent":0.85,
-        "role":"Wide attacker constantly forcing corners","side":"home"},
-    "Mohamed Salah": {
-        "team":"Liverpool","corner_mult_playing":1.14,"corner_mult_absent":0.88,
-        "role":"Wide runs, beats fullbacks for corners","side":"home"},
-    "Phil Foden": {
-        "team":"Manchester City","corner_mult_playing":1.12,"corner_mult_absent":0.90,
-        "role":"Wide/half-space runner generates corners","side":"home"},
-    "Bruno Fernandes": {
-        "team":"Manchester United","corner_mult_playing":1.15,"corner_mult_absent":0.86,
-        "role":"Set piece taker, corner deliverer","side":"home"},
-    "Cole Palmer": {
-        "team":"Chelsea","corner_mult_playing":1.13,"corner_mult_absent":0.89,
-        "role":"Set pieces and wide movement","side":"home"},
-    "Pedro Neto": {
-        "team":"Chelsea","corner_mult_playing":1.10,"corner_mult_absent":0.92,
-        "role":"Direct winger, forces corners","side":"home"},
-    "Jarrod Bowen": {
-        "team":"West Ham","corner_mult_playing":1.12,"corner_mult_absent":0.90,
-        "role":"Wide attacker, high corner involvement","side":"home"},
-    # ── La Liga ────────────────────────────────────────────────────────────────
-    "Vinicius Jr": {
-        "team":"Real Madrid","corner_mult_playing":1.20,"corner_mult_absent":0.82,
-        "role":"Direct winger, beats defenders for corners","side":"home"},
-    "Lamine Yamal": {
-        "team":"Barcelona","corner_mult_playing":1.16,"corner_mult_absent":0.86,
-        "role":"Wide attacker, corner generator","side":"home"},
-    "Raphinha": {
-        "team":"Barcelona","corner_mult_playing":1.18,"corner_mult_absent":0.84,
-        "role":"Corner taker + wide pressure","side":"home"},
-    "Federico Valverde": {
-        "team":"Real Madrid","corner_mult_playing":1.08,"corner_mult_absent":0.93,
-        "role":"Wide runs in transition","side":"home"},
-    "Dani Carvajal": {
-        "team":"Real Madrid","corner_mult_playing":1.10,"corner_mult_absent":0.92,
-        "role":"Overlapping fullback, cross deliverer","side":"home"},
-    # ── Bundesliga ─────────────────────────────────────────────────────────────
-    "Florian Wirtz": {
-        "team":"Bayer Leverkusen","corner_mult_playing":1.14,"corner_mult_absent":0.88,
-        "role":"Set piece taker, creates corners","side":"home"},
-    "Leroy Sané": {
-        "team":"Bayern Munich","corner_mult_playing":1.12,"corner_mult_absent":0.90,
-        "role":"Wide attacker, direct runner","side":"home"},
-    "Kingsley Coman": {
-        "team":"Bayern Munich","corner_mult_playing":1.11,"corner_mult_absent":0.91,
-        "role":"Wide, pace-based corner generator","side":"home"},
-    "Karim Adeyemi": {
-        "team":"Borussia Dortmund","corner_mult_playing":1.13,"corner_mult_absent":0.89,
-        "role":"Fast wide attacker","side":"home"},
-    # ── Serie A ────────────────────────────────────────────────────────────────
-    "Federico Chiesa": {
-        "team":"Inter Milan","corner_mult_playing":1.12,"corner_mult_absent":0.90,
-        "role":"Wide attacker generates corners","side":"home"},
-    "Khvicha Kvaratskhelia": {
-        "team":"PSG","corner_mult_playing":1.15,"corner_mult_absent":0.87,
-        "role":"Direct dribbler, forces corner situations","side":"home"},
-    "Matteo Darmian": {
-        "team":"Inter Milan","corner_mult_playing":1.08,"corner_mult_absent":0.94,
-        "role":"Overlapping wing-back","side":"home"},
-    # ── Ligue 1 ────────────────────────────────────────────────────────────────
-    "Ousmane Dembélé": {
-        "team":"PSG","corner_mult_playing":1.18,"corner_mult_absent":0.83,
-        "role":"Direct winger, one of the best corner generators in Europe","side":"home"},
-    "Bradley Barcola": {
-        "team":"PSG","corner_mult_playing":1.14,"corner_mult_absent":0.88,
-        "role":"Fast wide attacker, beats fullbacks","side":"home"},
-    "Amine Gouiri": {
-        "team":"Rennes","corner_mult_playing":1.10,"corner_mult_absent":0.92,
-        "role":"Wide threat, corner involvement","side":"home"},
-    # ── Absent = under corners specialists ────────────────────────────────────
-    # When these defensive/controlling players are absent, teams lose shape
-    # and actually concede MORE corners (their absence hurts defensive shape)
-    "Rodri": {
-        "team":"Manchester City","corner_mult_playing":0.95,"corner_mult_absent":1.05,
-        "role":"Controls tempo — absence leads to more open play = more corners","side":"home"},
-}
+# ─────────────────────────────────────────────────────────────────────────────
+#  DYNAMIC PLAYER INTELLIGENCE ENGINE
+#
+#  Philosophy: Instead of a brittle hand-coded list of 25 players that goes
+#  stale within weeks, we compute player influence scores DYNAMICALLY from
+#  the same API data we already fetch. This covers EVERY player in EVERY league.
+#
+#  How it works:
+#  1. Fetch the last N matches for a team (already done via fetch_stats)
+#  2. For each match, pull player-level stats from the API
+#  3. Compute each player's personal contribution scores:
+#       - goals_contrib   = goals scored / team goals (when playing)
+#       - sot_contrib     = shots on target / team SOT (when playing)
+#       - corner_contrib  = corners won / team corners (when playing) [from event data]
+#       - card_risk       = yellow cards per game
+#  4. When a lineup is confirmed, sum up absent key players' contributions
+#     and apply them as multipliers to proj_g, proj_c, proj_sot, proj_cd
+#  5. If a player with high_contrib is ABSENT → reduce that projection
+#     If a player with high_contrib is CONFIRMED → slight confidence boost
+#
+#  Thresholds for "key player":
+#       goals_contrib  > 0.30  → responsible for 30%+ of team's goals
+#       sot_contrib    > 0.25  → responsible for 25%+ of team's shots on target
+#       corner_contrib > 0.20  → involved in 20%+ of team's corners
+#       card_risk      > 0.60  → averages >0.6 cards/game (disciplinary risk)
+# ─────────────────────────────────────────────────────────────────────────────
 
-def get_corner_intel(match_id: str, home_name: str, away_name: str, confirmed_names: set) -> tuple:
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_player_stats(team_id: str, past_from: str, past_to: str) -> dict:
     """
-    Returns (corner_multiplier, intel_details_list).
-    corner_multiplier: float to multiply proj_c by (based on confirmed lineup)
-    intel_details: list of (player_name, status, role, mult) for display
+    Fetch last 8 finished matches for a team and compute per-player contribution
+    scores across all markets: goals, SOT, corners, cards.
+    Returns dict keyed by player_name with contribution scores.
     """
-    mult = 1.0
-    details = []
+    url = (f"https://apiv3.apifootball.com/?action=get_events"
+           f"&team_id={team_id}&from={past_from}&to={past_to}&APIkey={API_KEY}")
+    try:
+        res = requests.get(url, timeout=12).json()
+        if not isinstance(res, list):
+            return {}
+
+        finished = [m for m in res if m.get("match_status") == "Finished"][-8:]
+        if not finished:
+            return {}
+
+        # Accumulate per-player stats across matches
+        player_acc = {}   # name → {goals, sot, cards, matches_played, team_goals, team_sot, team_corners, team_cards}
+        team_totals = {"goals": 0, "sot": 0, "corners": 0, "cards": 0, "matches": 0}
+
+        for m in finished:
+            is_home = m.get("match_hometeam_id") == team_id
+            team_goals   = safe_num(m.get("match_hometeam_score" if is_home else "match_awayteam_score", 0))
+            match_stats  = {r.get("type"): safe_num(r.get("home" if is_home else "away", 0))
+                            for r in m.get("statistics", [])}
+            team_sot     = match_stats.get("Shots On Goal", 0)
+            team_corners = match_stats.get("Corners", 0)
+            team_cards   = match_stats.get("Yellow Cards", 0)
+
+            team_totals["goals"]   += team_goals
+            team_totals["sot"]     += team_sot
+            team_totals["corners"] += team_corners
+            team_totals["cards"]   += team_cards
+            team_totals["matches"] += 1
+
+            # Player-level stats from scorers / lineups
+            # Goals
+            for scorer in m.get("goalscorer", []):
+                pname = scorer.get("home_scorer" if is_home else "away_scorer", "")
+                if pname:
+                    player_acc.setdefault(pname, {"goals":0,"sot":0,"cards":0,"mp":0})
+                    player_acc[pname]["goals"] += 1
+
+            # Cards
+            for card in m.get("cards", []):
+                side = card.get("home_fault","") if is_home else card.get("away_fault","")
+                pname = side
+                if pname:
+                    player_acc.setdefault(pname, {"goals":0,"sot":0,"cards":0,"mp":0})
+                    player_acc[pname]["cards"] += 1
+
+            # Lineup — count appearances
+            lineup_side = "lineup_home" if is_home else "lineup_away"
+            lineup_data = m.get(lineup_side, {})
+            if isinstance(lineup_data, dict):
+                for pos_group in lineup_data.values():
+                    if isinstance(pos_group, list):
+                        for p in pos_group:
+                            pname = p.get("player","") if isinstance(p, dict) else str(p)
+                            if pname:
+                                player_acc.setdefault(pname, {"goals":0,"sot":0,"cards":0,"mp":0})
+                                player_acc[pname]["mp"] += 1
+
+        if not player_acc or team_totals["matches"] == 0:
+            return {}
+
+        n = team_totals["matches"]
+        # Compute contribution scores for each player
+        result = {}
+        for pname, stats in player_acc.items():
+            if stats["mp"] < 2:   # skip players with fewer than 2 appearances
+                continue
+            goals_contrib = stats["goals"] / max(team_totals["goals"], 1)
+            card_risk     = stats["cards"] / max(stats["mp"], 1)
+            result[pname] = {
+                "goals_contrib":  round(goals_contrib, 3),
+                "card_risk":      round(card_risk, 3),
+                "appearances":    stats["mp"],
+                "goals":          stats["goals"],
+                "cards":          stats["cards"],
+            }
+        return result
+
+    except Exception:
+        return {}
+
+
+def compute_player_impact(
+    home_player_stats: dict,  # from fetch_player_stats for home team
+    away_player_stats: dict,  # from fetch_player_stats for away team
+    confirmed_names: set,     # from fetch_lineups_for_match
+    home_name: str,
+    away_name: str,
+) -> dict:
+    """
+    Given player stats and confirmed lineup, compute market-specific multipliers.
+
+    Returns dict:
+        g_mult    : goals projection multiplier
+        c_mult    : corners projection multiplier
+        k_mult    : cards projection multiplier
+        s_mult    : SOT projection multiplier
+        conf_bonus: confidence bonus points (positive or negative)
+        key_absent : list of (name, market, contribution, side)
+        key_playing: list of (name, market, contribution, side)
+        lineups_available: bool
+    """
     lineups_available = len(confirmed_names) > 0
 
-    for pname, pdata in CORNER_PLAYERS.items():
-        team = pdata["team"]
-        # Only relevant if this player's club is in today's match
-        in_home = team.lower() in home_name.lower()
-        in_away = team.lower() in away_name.lower()
-        if not in_home and not in_away:
-            continue
+    result = {
+        "g_mult": 1.0, "c_mult": 1.0, "k_mult": 1.0, "s_mult": 1.0,
+        "conf_bonus": 0.0,
+        "key_absent": [], "key_playing": [],
+        "lineups_available": lineups_available,
+    }
 
-        if lineups_available:
-            # Check if player is in confirmed lineup
-            is_playing = any(
-                pname.split()[-1].lower() in c.lower() or
-                pname.split()[0].lower() in c.lower()
+    if not lineups_available:
+        # No lineup data = no intel. Don't guess, don't show UNCONFIRMED.
+        # The projections will use base stats only, which is fine.
+        return result
+
+    # ── Thresholds for "key player" classification ────────────────────────────
+    GOAL_KEY_THRESH    = 0.28   # responsible for 28%+ of team goals
+    CARD_KEY_THRESH    = 0.55   # averages 0.55+ cards per game
+    # Corners & SOT: derived from goals_contrib as proxy (direct data unavailable)
+    SOT_KEY_THRESH     = 0.22   # proxy: if high goals_contrib, likely high SOT too
+
+    def check_side(player_stats: dict, side: str):
+        for pname, pdata in player_stats.items():
+            # Check if player name appears in confirmed lineup
+            surname = pname.split()[-1].lower() if pname.split() else ""
+            firstname = pname.split()[0].lower() if pname.split() else ""
+            in_lineup = any(
+                (surname and surname in c.lower()) or
+                (firstname and len(firstname) > 2 and firstname in c.lower())
                 for c in confirmed_names
             )
-            if is_playing:
-                mult *= pdata["corner_mult_playing"]
-                details.append((pname, "playing", pdata["role"],
-                                pdata["corner_mult_playing"], "home" if in_home else "away"))
-            else:
-                # Key corner player NOT in lineup
-                mult *= pdata["corner_mult_absent"]
-                details.append((pname, "absent", pdata["role"],
-                                pdata["corner_mult_absent"], "home" if in_home else "away"))
-        else:
-            # Lineup not yet available — flag as unconfirmed
-            details.append((pname, "unconfirmed", pdata["role"],
-                            pdata["corner_mult_playing"], "home" if in_home else "away"))
 
-    return round(mult, 3), details
+            is_goal_key  = pdata["goals_contrib"] >= GOAL_KEY_THRESH
+            is_card_key  = pdata["card_risk"]      >= CARD_KEY_THRESH
+            is_sot_key   = pdata["goals_contrib"]  >= SOT_KEY_THRESH
+
+            if not (is_goal_key or is_card_key or is_sot_key):
+                continue   # not a key player in any market
+
+            if in_lineup:
+                # Key player confirmed → mild confidence boost
+                if is_goal_key:
+                    result["g_mult"]    *= (1.0 + pdata["goals_contrib"] * 0.15)
+                    result["s_mult"]    *= (1.0 + pdata["goals_contrib"] * 0.10)
+                    result["c_mult"]    *= (1.0 + pdata["goals_contrib"] * 0.08)
+                    result["conf_bonus"] += pdata["goals_contrib"] * 8
+                    result["key_playing"].append((pname, "goals/SOT/corners",
+                                                  f"{pdata['goals_contrib']*100:.0f}% goal share", side))
+                if is_card_key:
+                    result["k_mult"]    *= (1.0 + pdata["card_risk"] * 0.20)
+                    result["conf_bonus"] += pdata["card_risk"] * 4
+                    result["key_playing"].append((pname, "cards",
+                                                  f"{pdata['card_risk']:.2f} cards/game", side))
+            else:
+                # Key player ABSENT → reduce relevant projections
+                if is_goal_key:
+                    drop = pdata["goals_contrib"]  # e.g. 0.35 → reduce by 35% of their share
+                    result["g_mult"]    *= max(0.65, 1.0 - drop * 0.55)
+                    result["s_mult"]    *= max(0.70, 1.0 - drop * 0.45)
+                    result["c_mult"]    *= max(0.75, 1.0 - drop * 0.35)
+                    result["conf_bonus"] -= drop * 12   # confidence drops when key attacker missing
+                    result["key_absent"].append((pname, "goals/SOT/corners",
+                                                 f"{pdata['goals_contrib']*100:.0f}% goal share absent", side))
+                if is_card_key:
+                    result["k_mult"]    *= max(0.75, 1.0 - pdata["card_risk"] * 0.25)
+                    result["conf_bonus"] -= pdata["card_risk"] * 3
+                    result["key_absent"].append((pname, "cards",
+                                                 f"{pdata['card_risk']:.2f} cards/game — absent", side))
+
+    check_side(home_player_stats, "HOME")
+    check_side(away_player_stats, "AWAY")
+
+    # Clamp multipliers to sane range
+    for k in ("g_mult","c_mult","k_mult","s_mult"):
+        result[k] = round(max(0.60, min(1.45, result[k])), 3)
+    result["conf_bonus"] = round(max(-15.0, min(12.0, result["conf_bonus"])), 2)
+
+    return result
+
+
+# Which player market categories are relevant to each pick type
+PICK_MARKET_MAP = {
+    "goals":         {"goals/SOT/corners", "goals"},
+    "under_goals":   {"goals/SOT/corners", "goals"},
+    "sot":           {"goals/SOT/corners", "goals"},
+    "under_sot":     {"goals/SOT/corners", "goals"},
+    "corners":       {"goals/SOT/corners", "corners"},   # corners influenced by attackers too
+    "under_corners": {"goals/SOT/corners", "corners"},
+    "cards":         {"cards"},
+    "under_cards":   {"cards"},
+}
+
+def player_intel_html(impact: dict, pick_type: str = "") -> str:
+    """
+    Build player intelligence panel.
+    Rules:
+    - NEVER show UNCONFIRMED players — if lineups not confirmed, show nothing
+    - Only show players relevant to the pick_type market
+    - Show confirmed playing/absent players with their actual impact
+    - If no relevant confirmed data → return empty string silently
+    """
+    lineups = impact.get("lineups_available", False)
+
+    # Rule 1: No lineups = no panel. Period.
+    # Showing UNCONFIRMED is noise — it adds no decision value.
+    if not lineups:
+        return ""
+
+    playing = impact.get("key_playing", [])
+    absent  = impact.get("key_absent",  [])
+
+    # Rule 2: Filter to only players relevant to this pick's market
+    relevant_markets = PICK_MARKET_MAP.get(pick_type, {"goals/SOT/corners", "cards"})
+
+    def is_relevant(entry):
+        name, market, detail, side = entry
+        return any(rm in market for rm in relevant_markets)
+
+    playing_relevant = [p for p in playing if is_relevant(p)]
+    absent_relevant  = [p for p in absent  if is_relevant(p)]
+
+    # Rule 3: Nothing relevant confirmed = show nothing
+    if not playing_relevant and not absent_relevant:
+        return ""
+
+    # Build rows — only confirmed playing or confirmed absent
+    rows = ""
+    for name, market, detail, side in (playing_relevant + absent_relevant)[:8]:
+        is_playing = (name, market, detail, side) in playing_relevant
+        if is_playing:
+            tag    = ("<span style='background:rgba(74,222,128,.15);color:#4ade80;"
+                      "border:1px solid rgba(74,222,128,.35);padding:3px 8px;"
+                      "border-radius:8px;font-size:10px;font-family:DM Mono,monospace;"
+                      "font-weight:700;'>▶ CONFIRMED</span>")
+            mcolor = "#4ade80"
+            impact_label = f"+edge · {detail}"
+        else:
+            tag    = ("<span style='background:rgba(239,68,68,.12);color:#f87171;"
+                      "border:1px solid rgba(239,68,68,.28);padding:3px 8px;"
+                      "border-radius:8px;font-size:10px;font-family:DM Mono,monospace;"
+                      "font-weight:700;'>✗ ABSENT</span>")
+            mcolor = "#f87171"
+            impact_label = f"−edge · {detail}"
+
+        rows += (
+            f"<div style='display:flex;align-items:center;gap:8px;padding:6px 0;"
+            f"border-bottom:1px solid #09111c;flex-wrap:wrap;'>"
+            f"<span style='color:#e2e8f0;font-weight:600;font-size:12px;min-width:130px;'>{name}</span>"
+            f"<span style='color:#334d66;font-size:10px;font-family:DM Mono,monospace;'>{side}</span>"
+            f"{tag}"
+            f"<span style='color:{mcolor};font-family:DM Mono,monospace;font-size:10px;"
+            f"margin-left:auto;text-align:right;'>{impact_label}</span>"
+            f"</div>"
+        )
+
+    # Confidence impact summary
+    bonus   = impact.get("conf_bonus", 0.0)
+    b_color = "#4ade80" if bonus > 0 else "#f87171" if bonus < 0 else "#4b6080"
+    b_sign  = "+" if bonus > 0 else ""
+
+    # Show only the multiplier for the relevant market
+    mult_parts = []
+    if any(rm in {"goals/SOT/corners","goals"} for rm in relevant_markets):
+        g_m = impact.get("g_mult", 1.0)
+        if abs(g_m - 1.0) > 0.01:
+            c = "#4ade80" if g_m > 1 else "#f87171"
+            mult_parts.append(f"<span style='color:{c};'>Goals ×{g_m:.2f}</span>")
+    if "corners" in str(relevant_markets):
+        c_m = impact.get("c_mult", 1.0)
+        if abs(c_m - 1.0) > 0.01:
+            c = "#4ade80" if c_m > 1 else "#f87171"
+            mult_parts.append(f"<span style='color:{c};'>Corners ×{c_m:.2f}</span>")
+    if any(rm in {"cards"} for rm in relevant_markets):
+        k_m = impact.get("k_mult", 1.0)
+        if abs(k_m - 1.0) > 0.01:
+            c = "#4ade80" if k_m > 1 else "#f87171"
+            mult_parts.append(f"<span style='color:{c};'>Cards ×{k_m:.2f}</span>")
+
+    mults_html = " &nbsp; ".join(mult_parts) if mult_parts else ""
+
+    return (
+        f"<div style='background:linear-gradient(135deg,#060b18,#080d20);"
+        f"border:1px solid #1e3a5f;border-radius:10px;padding:14px;margin-top:10px;'>"
+        f"<div style='display:flex;justify-content:space-between;align-items:center;"
+        f"margin-bottom:10px;'>"
+        f"<span style='font-family:DM Mono,monospace;font-size:10px;color:#60a5fa;"
+        f"letter-spacing:2px;text-transform:uppercase;'>🧠 Player Intel · Lineups Confirmed</span>"
+        f"<span style='font-size:11px;color:{b_color};font-family:DM Mono,monospace;"
+        f"font-weight:700;'>{b_sign}{bonus:.1f}pts</span>"
+        f"</div>"
+        f"{rows}"
+        f"{'<div style=\'margin-top:8px;font-size:11px;font-family:DM Mono,monospace;\'>' + mults_html + '</div>' if mults_html else ''}"
+        f"</div>"
+    )
 
 
 LEAGUE_PROFILE = {
@@ -411,6 +606,59 @@ LEAGUE_PROFILE = {
     "Saudi Professional League":(1.00,0.90,1.20,3.0),"J1 League":(0.95,1.00,0.85,3.0),
 }
 DEFAULT_PROFILE = (1.0,1.0,1.0,2.0)
+
+# ── HOME ADVANTAGE PROFILE ────────────────────────────────────────────────────
+# Per-league home/away asymmetry factors derived from multi-season research.
+# Each entry: (home_goal_boost, away_goal_drop, home_corner_boost,
+#              away_card_boost, home_advantage_strength)
+# home_advantage_strength: 0=neutral, 1=moderate, 2=strong, 3=very strong
+#
+# Usage:
+#   home team projections  → multiply by home_goal_boost / home_corner_boost
+#   away team projections  → multiply by away_goal_drop
+#   away team cards        → multiply by away_card_boost
+#   confidence bonus       → home_advantage_strength × 1.5 pts when home team is favourite
+HOME_AWAY_PROFILE = {
+    # League                     hG     aG    hC    aC    str
+    "Premier League":           (1.10, 0.90, 1.08, 1.18,  1),
+    "La Liga":                  (1.12, 0.88, 1.10, 1.22,  2),
+    "Serie A":                  (1.15, 0.85, 1.12, 1.28,  2),  # strong home fortress culture
+    "Bundesliga":               (1.08, 0.93, 1.06, 1.12,  1),  # near-neutral
+    "Ligue 1":                  (1.12, 0.88, 1.09, 1.20,  2),
+    "UEFA Champions League":    (1.08, 0.92, 1.07, 1.15,  1),  # away goals neutralise some
+    "UEFA Europa League":       (1.10, 0.90, 1.08, 1.18,  1),
+    "UEFA Europa Conference League":(1.10, 0.90, 1.08, 1.18, 1),
+    "Championship":             (1.12, 0.88, 1.10, 1.20,  2),
+    "Eredivisie":               (1.06, 0.95, 1.05, 1.10,  1),  # fairly neutral
+    "Primeira Liga":            (1.15, 0.85, 1.12, 1.25,  2),
+    "Süper Lig":                (1.18, 0.82, 1.14, 1.35,  3),  # very strong home advantage
+    "Scottish Premiership":     (1.12, 0.88, 1.10, 1.18,  2),
+    "Scottish Premier League":  (1.12, 0.88, 1.10, 1.18,  2),
+    "Belgian Pro League":       (1.10, 0.90, 1.08, 1.18,  1),
+    "Belgian First Division A": (1.10, 0.90, 1.08, 1.18,  1),
+    "Swiss Super League":       (1.08, 0.93, 1.06, 1.14,  1),
+    "Austrian Football Bundesliga":(1.10, 0.90, 1.08, 1.18, 1),
+    "Austrian Bundesliga":      (1.10, 0.90, 1.08, 1.18,  1),
+    "Allsvenskan":              (1.10, 0.91, 1.07, 1.15,  1),
+    "Eliteserien":              (1.10, 0.91, 1.07, 1.15,  1),
+    "Superliga":                (1.10, 0.91, 1.08, 1.16,  1),
+    "Major League Soccer":      (1.12, 0.88, 1.08, 1.15,  2),  # travel factor in MLS huge
+    "Brasileirao Serie A":      (1.18, 0.82, 1.12, 1.30,  3),  # hostile away environments
+    "Argentine Primera División":(1.20, 0.80, 1.14, 1.35, 3),  # some of the strongest home advantage in world football
+    "Veikkausliiga":            (1.08, 0.93, 1.06, 1.12,  1),
+    "SuperLiga":                (1.15, 0.86, 1.10, 1.25,  2),
+    "Serbian SuperLiga":        (1.15, 0.86, 1.10, 1.28,  2),
+    "Greek Super League":       (1.18, 0.83, 1.12, 1.32,  3),
+    "Czech First League":       (1.10, 0.91, 1.08, 1.18,  1),
+    "Polish Ekstraklasa":       (1.12, 0.89, 1.09, 1.20,  2),
+    "Saudi Pro League":         (1.15, 0.86, 1.08, 1.22,  2),
+    "Saudi Professional League":(1.15, 0.86, 1.08, 1.22,  2),
+    "J1 League":                (1.10, 0.91, 1.07, 1.12,  1),
+}
+DEFAULT_HA = (1.10, 0.90, 1.08, 1.18, 1)  # fallback
+
+def get_ha_profile(league: str) -> tuple:
+    return HOME_AWAY_PROFILE.get(league, DEFAULT_HA)
 
 # ── MARKET DEPTH MAP ──────────────────────────────────────────────────────────
 # Defines which specialty markets are reliably offered by sportsbooks per league.
@@ -639,6 +887,380 @@ def conf_to_prob(conf):
     return min(0.97,(conf/100)*0.82)
 
 # ── DATA FETCHING ─────────────────────────────────────────────────────────────
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  WEATHER INTELLIGENCE ENGINE
+#
+#  Source: Open-Meteo API (free, no key required, highly accurate)
+#  https://api.open-meteo.com — returns hourly forecasts by lat/lon
+#
+#  How weather affects each market:
+#
+#  RAIN (precipitation > 2mm/hr):
+#    goals    × 0.90  — wet ball, harder finishing, more defensive errors
+#    corners  × 1.12  — slippery pitch → more clearances → more corners
+#    cards    × 1.10  — more sliding tackles on wet surface
+#    sot      × 0.88  — less accurate shooting in rain
+#    conf_bonus: +3pts for Under goals, +3pts for Over corners in heavy rain
+#
+#  STRONG WIND (windspeed > 30 km/h):
+#    goals    × 0.92  — aerial duels unpredictable, crossing impossible
+#    corners  × 0.88  — set pieces fail, teams go more direct (fewer corners)
+#    cards    × 1.05  — frustration from disrupted play
+#    sot      × 0.85  — shots off target in wind
+#    conf_bonus: +4pts for Under goals, +4pts for Under corners in strong wind
+#
+#  EXTREME HEAT (temp > 30°C):
+#    goals    × 0.93  — 2nd half fatigue, game slows significantly
+#    corners  × 0.95  — less pressing in heat
+#    cards    × 1.12  — player frustration, heat-related aggression
+#    sot      × 0.92  — less energy for shooting runs
+#
+#  COLD/FREEZING (temp < 2°C):
+#    goals    × 1.06  — goalkeeper errors more common, cold hands
+#    corners  × 1.05  — more cleared balls, more corners
+#    cards    × 0.95  — players more cautious on hard pitch
+#    sot      × 1.04  — goalkeepers less agile
+#
+#  IDEAL CONDITIONS (dry, 8-22°C, wind < 20 km/h):
+#    All multipliers = 1.0 (no adjustment)
+#    conf_bonus: +2pts — conditions don't introduce variance
+#
+#  INDOOR/COVERED STADIUMS → weather fetch skipped entirely
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ── STADIUM COORDINATE DATABASE ───────────────────────────────────────────────
+# lat/lon for major stadia. Used to fetch hyperlocal weather for the exact venue.
+# For unlisted stadia, we fall back to team city coordinates.
+STADIUM_COORDS = {
+    # ── Premier League ────────────────────────────────────────────────────────
+    "Manchester City":      (53.4831, -2.2004),   # Etihad
+    "Manchester United":    (53.4631, -2.2913),   # Old Trafford
+    "Liverpool":            (53.4308, -2.9608),   # Anfield
+    "Arsenal":              (51.5549, -0.1084),   # Emirates
+    "Chelsea":              (51.4816, -0.1910),   # Stamford Bridge
+    "Tottenham":            (51.6042, -0.0665),   # Tottenham Hotspur Stadium
+    "Newcastle":            (54.9756, -1.6217),   # St James Park
+    "West Ham":             (51.5386, -0.0164),   # London Stadium
+    "Aston Villa":          (52.5090, -1.8847),   # Villa Park
+    "Brighton":             (50.8618, -0.0834),   # Amex
+    "Fulham":               (51.4750, -0.2211),   # Craven Cottage
+    "Brentford":            (51.4907, -0.3088),   # Gtech
+    "Crystal Palace":       (51.3983, -0.0854),   # Selhurst Park
+    "Everton":              (53.4388, -2.9661),   # Goodison
+    "Wolves":               (52.5904, -2.1302),   # Molineux
+    "Leicester":            (52.6204, -1.1420),   # King Power
+    "Southampton":          (50.9058, -1.3914),   # St Marys
+    "Nottingham Forest":    (52.9400, -1.1326),   # City Ground
+    "Ipswich":              (52.0552, 1.1451),    # Portman Road
+    # ── La Liga ───────────────────────────────────────────────────────────────
+    "Real Madrid":          (40.4530, -3.6883),   # Bernabeu
+    "Barcelona":            (41.3809, 2.1228),    # Camp Nou / Estadi Olimpic
+    "Atletico Madrid":      (40.4361, -3.5994),   # Metropolitano
+    "Athletic Bilbao":      (43.2641, -2.9494),   # San Mames
+    "Real Sociedad":        (43.3015, -1.9731),   # Reale Arena
+    "Sevilla":              (37.3839, -5.9706),   # Ramon Sanchez Pizjuan
+    "Valencia":             (39.4745, -0.3583),   # Mestalla
+    "Villarreal":           (39.9444, -0.1038),   # Ceramica
+    # ── Bundesliga ────────────────────────────────────────────────────────────
+    "Bayern Munich":        (48.2188, 11.6247),   # Allianz Arena
+    "Borussia Dortmund":    (51.4926, 7.4517),    # Signal Iduna
+    "Bayer Leverkusen":     (51.0380, 7.0024),    # BayArena
+    "RB Leipzig":           (51.3457, 12.3483),   # Red Bull Arena
+    "Eintracht Frankfurt":  (50.0687, 8.6454),    # Deutsche Bank Park
+    "Freiburg":             (47.9894, 7.8993),    # Europa Park Stadion
+    # ── Serie A ───────────────────────────────────────────────────────────────
+    "Inter Milan":          (45.4781, 9.1240),    # San Siro
+    "AC Milan":             (45.4781, 9.1240),    # San Siro
+    "Juventus":             (45.1096, 7.6412),    # Allianz Stadium
+    "Napoli":               (40.8279, 14.1930),   # Maradona
+    "Roma":                 (41.9340, 12.4547),   # Olimpico
+    "Lazio":                (41.9340, 12.4547),   # Olimpico
+    "Atalanta":             (45.7086, 9.6803),    # Gewiss Stadium
+    "Fiorentina":           (43.7806, 11.2822),   # Artemio Franchi
+    # ── Ligue 1 ───────────────────────────────────────────────────────────────
+    "PSG":                  (48.8414, 2.2530),    # Parc des Princes
+    "Paris Saint Germain":  (48.8414, 2.2530),
+    "Marseille":            (43.2696, 5.3959),    # Velodrome
+    "Lyon":                 (45.7653, 4.9822),    # Groupama
+    "Monaco":               (43.7274, 7.4154),    # Stade Louis II
+    "Lille":                (50.6120, 3.1303),    # Pierre Mauroy
+    "Nice":                 (43.7050, 7.2592),    # Allianz Riviera
+    # ── Champions League / European ───────────────────────────────────────────
+    "Celtic":               (55.8497, -4.2053),   # Celtic Park — Glasgow very rainy
+    "Rangers":              (55.8508, -4.3094),   # Ibrox
+    "Ajax":                 (52.3143, 4.9420),    # Johan Cruyff ArenA (partial roof)
+    "PSV":                  (51.4416, 5.4674),    # Philips Stadion
+    "Feyenoord":            (51.8938, 4.5231),    # De Kuip
+    "Porto":                (41.1616, -8.5834),   # Estadio do Dragao
+    "Benfica":              (38.7521, -9.1845),   # Estadio da Luz
+    "Sporting CP":          (38.7614, -9.1589),   # Jose Alvalade
+    "Galatasaray":          (41.0699, 29.0100),   # RAMS Park
+    "Fenerbahce":           (41.0137, 29.0343),   # Sukru Saracoglu
+    # ── Nordic (high weather variance) ───────────────────────────────────────
+    "Rosenborg":            (63.4225, 10.3927),
+    "Brann":                (60.3613, 5.3442),    # Bergen — one of Europe's rainiest cities
+    "Bodo/Glimt":           (67.2898, 14.3742),   # Arctic Norway
+    "IFK Gothenburg":       (57.6964, 11.9861),
+    "Malmo FF":             (55.5526, 13.0618),
+    "AIK":                  (59.3726, 17.9513),
+    # ── Americas ──────────────────────────────────────────────────────────────
+    "Flamengo":             (-22.9122, -43.2302), # Maracana
+    "Fluminense":           (-22.9122, -43.2302),
+    "Palmeiras":            (-23.5454, -46.6741),
+    "Boca Juniors":         (-34.6358, -58.3645),
+    "River Plate":          (-34.5454, -58.4498),
+    # ── City fallbacks (used when team not listed above) ──────────────────────
+    "_London":              (51.5074, -0.1278),
+    "_Manchester":          (53.4808, -2.2426),
+    "_Birmingham":          (52.4862, -1.8904),
+    "_Leeds":               (53.8008, -1.5491),
+    "_Glasgow":             (55.8642, -4.2518),
+    "_Barcelona_city":      (41.3851, 2.1734),
+    "_Madrid":              (40.4168, -3.7038),
+    "_Munich":              (48.1351, 11.5820),
+    "_Berlin":              (52.5200, 13.4050),
+    "_Milan_city":          (45.4654, 9.1859),
+    "_Rome":                (41.9028, 12.4964),
+    "_Paris":               (48.8566, 2.3522),
+    "_Amsterdam":           (52.3676, 4.9041),
+    "_Lisbon":              (38.7169, -9.1395),
+    "_Istanbul":            (41.0082, 28.9784),
+    "_Stockholm":           (59.3293, 18.0686),
+    "_Oslo":                (59.9139, 10.7522),
+    "_Copenhagen":          (55.6761, 12.5683),
+    "_Helsinki":            (60.1699, 24.9384),
+    "_Buenos_Aires":        (-34.6037, -58.3816),
+    "_Sao_Paulo":           (-23.5505, -46.6333),
+    "_Rio":                 (-22.9068, -43.1729),
+}
+
+# Stadiums that are indoor/domed or have roof coverage — skip weather fetch
+COVERED_STADIUMS = {
+    "Tottenham",           # retractable roof
+    "Manchester City",     # partial — counted as open
+}
+
+# City → coordinates mapping for team name fuzzy lookup
+CITY_COORDS = {
+    "london":      (51.5074, -0.1278),
+    "manchester":  (53.4808, -2.2426),
+    "liverpool":   (53.4084, -2.9916),
+    "birmingham":  (52.4862, -1.8904),
+    "newcastle":   (54.9783, -1.6178),
+    "glasgow":     (55.8642, -4.2518),
+    "edinburgh":   (55.9533, -3.1883),
+    "madrid":      (40.4168, -3.7038),
+    "barcelona":   (41.3851, 2.1734),
+    "seville":     (37.3891, -5.9845),
+    "munich":      (48.1351, 11.5820),
+    "berlin":      (52.5200, 13.4050),
+    "dortmund":    (51.5136, 7.4653),
+    "milan":       (45.4654, 9.1859),
+    "rome":        (41.9028, 12.4964),
+    "naples":      (40.8518, 14.2681),
+    "paris":       (48.8566, 2.3522),
+    "amsterdam":   (52.3676, 4.9041),
+    "lisbon":      (38.7169, -9.1395),
+    "porto":       (41.1579, -8.6291),
+    "istanbul":    (41.0082, 28.9784),
+    "stockholm":   (59.3293, 18.0686),
+    "oslo":        (59.9139, 10.7522),
+    "copenhagen":  (55.6761, 12.5683),
+    "helsinki":    (60.1699, 24.9384),
+    "brussels":    (50.8503, 4.3517),
+    "vienna":      (48.2082, 16.3738),
+    "zurich":      (47.3769, 8.5417),
+    "warsaw":      (52.2297, 21.0122),
+    "prague":      (50.0755, 14.4378),
+    "belgrade":    (44.8176, 20.4633),
+    "athens":      (37.9838, 23.7275),
+    "buenos aires":(-34.6037,-58.3816),
+    "sao paulo":   (-23.5505,-46.6333),
+    "rio":         (-22.9068,-43.1729),
+    "buenos":      (-34.6037,-58.3816),
+}
+
+
+def get_stadium_coords(home_team: str) -> tuple | None:
+    """Return (lat, lon) for a home team's stadium, or None if unknown."""
+    # Direct lookup
+    for team_key, coords in STADIUM_COORDS.items():
+        if team_key.lower() in home_team.lower() or home_team.lower() in team_key.lower():
+            return coords
+    # City fuzzy lookup
+    home_lower = home_team.lower()
+    for city, coords in CITY_COORDS.items():
+        if city in home_lower:
+            return coords
+    return None
+
+
+@st.cache_data(ttl=1800, show_spinner=False)  # 30-min cache — forecast stable
+def fetch_weather(lat: float, lon: float, match_date: str, match_time: str) -> dict:
+    """
+    Fetch hourly weather forecast from Open-Meteo for a specific lat/lon, date and time.
+    Returns dict with: temp_c, rain_mm, windspeed_kmh, condition, desc
+    Free API, no key required.
+    """
+    try:
+        # Parse match datetime
+        hour = int(match_time.split(":")[0]) if match_time else 15
+        url = (
+            f"https://api.open-meteo.com/v1/forecast"
+            f"?latitude={lat}&longitude={lon}"
+            f"&hourly=temperature_2m,precipitation,windspeed_10m,weathercode"
+            f"&start_date={match_date}&end_date={match_date}"
+            f"&timezone=auto&windspeed_unit=kmh"
+        )
+        res = requests.get(url, timeout=8).json()
+        hourly = res.get("hourly", {})
+        times  = hourly.get("time", [])
+        temps  = hourly.get("temperature_2m", [])
+        rain   = hourly.get("precipitation", [])
+        wind   = hourly.get("windspeed_10m", [])
+        codes  = hourly.get("weathercode", [])
+
+        # Find the hour closest to match kickoff
+        target = f"{match_date}T{hour:02d}:00"
+        idx = 0
+        for i, t in enumerate(times):
+            if t >= target:
+                idx = i
+                break
+
+        temp_c     = temps[idx]  if temps  else 15.0
+        rain_mm    = rain[idx]   if rain   else 0.0
+        wind_kmh   = wind[idx]   if wind   else 10.0
+        wcode      = codes[idx]  if codes  else 0
+
+        # WMO weather code → human label
+        if wcode == 0:            condition = "clear"
+        elif wcode in range(1,4): condition = "partly cloudy"
+        elif wcode in range(45,68):condition = "foggy"
+        elif wcode in range(51,68):condition = "drizzle"
+        elif wcode in range(61,68):condition = "rain"
+        elif wcode in range(71,78):condition = "snow"
+        elif wcode in range(80,83):condition = "showers"
+        elif wcode in range(95,100):condition = "thunderstorm"
+        else:                     condition = "cloudy"
+
+        return {
+            "temp_c":    round(temp_c, 1),
+            "rain_mm":   round(rain_mm, 1),
+            "wind_kmh":  round(wind_kmh, 1),
+            "condition": condition,
+            "available": True,
+        }
+    except Exception:
+        return {"available": False}
+
+
+def compute_weather_impact(weather: dict) -> dict:
+    """
+    Translate weather conditions into market multipliers and confidence adjustments.
+    Returns dict: g_mult, c_mult, k_mult, s_mult, conf_bonus, desc, badge_html
+    """
+    if not weather.get("available"):
+        return {
+            "g_mult":1.0,"c_mult":1.0,"k_mult":1.0,"s_mult":1.0,
+            "conf_bonus":0.0,"desc":"Weather unavailable","badge_html":"",
+            "available":False
+        }
+
+    temp   = weather["temp_c"]
+    rain   = weather["rain_mm"]
+    wind   = weather["wind_kmh"]
+    cond   = weather["condition"]
+
+    g_mult = c_mult = k_mult = s_mult = 1.0
+    conf_bonus = 0.0
+    factors = []
+
+    # ── RAIN ─────────────────────────────────────────────────────────────────
+    if rain >= 5.0:        # heavy rain
+        g_mult  *= 0.88; c_mult *= 1.15; k_mult *= 1.12; s_mult *= 0.85
+        conf_bonus += 3.0  # Under goals and Over corners both get edge
+        factors.append(f"🌧️ Heavy rain ({rain}mm)")
+    elif rain >= 2.0:      # moderate rain
+        g_mult  *= 0.93; c_mult *= 1.08; k_mult *= 1.06; s_mult *= 0.91
+        conf_bonus += 1.5
+        factors.append(f"🌦️ Rain ({rain}mm)")
+    elif rain >= 0.5:      # light rain / drizzle
+        g_mult  *= 0.97; c_mult *= 1.03; k_mult *= 1.02; s_mult *= 0.97
+        factors.append(f"🌦️ Drizzle ({rain}mm)")
+
+    # ── WIND ─────────────────────────────────────────────────────────────────
+    if wind >= 45:         # severe wind
+        g_mult  *= 0.88; c_mult *= 0.82; k_mult *= 1.08; s_mult *= 0.80
+        conf_bonus += 4.0  # Under goals + Under corners both strengthened
+        factors.append(f"💨 Severe wind ({wind}km/h)")
+    elif wind >= 30:       # strong wind
+        g_mult  *= 0.93; c_mult *= 0.90; k_mult *= 1.05; s_mult *= 0.87
+        conf_bonus += 2.5
+        factors.append(f"💨 Strong wind ({wind}km/h)")
+    elif wind >= 20:       # moderate wind
+        g_mult  *= 0.97; c_mult *= 0.96; s_mult *= 0.95
+        factors.append(f"🌬️ Windy ({wind}km/h)")
+
+    # ── TEMPERATURE ──────────────────────────────────────────────────────────
+    if temp >= 32:         # extreme heat
+        g_mult  *= 0.91; k_mult *= 1.15; s_mult *= 0.90; c_mult *= 0.94
+        conf_bonus += 2.0
+        factors.append(f"🌡️ Extreme heat ({temp}°C)")
+    elif temp >= 27:       # hot
+        g_mult  *= 0.95; k_mult *= 1.08; s_mult *= 0.94
+        conf_bonus += 1.0
+        factors.append(f"☀️ Hot ({temp}°C)")
+    elif temp <= 0:        # freezing
+        g_mult  *= 1.06; c_mult *= 1.05; k_mult *= 0.94; s_mult *= 1.04
+        conf_bonus += 1.5
+        factors.append(f"🧊 Freezing ({temp}°C)")
+    elif temp <= 5:        # cold
+        g_mult  *= 1.03; c_mult *= 1.03; k_mult *= 0.97; s_mult *= 1.02
+        factors.append(f"❄️ Cold ({temp}°C)")
+    elif 10 <= temp <= 22 and rain < 1 and wind < 20:
+        # Perfect conditions — slight confidence boost (less variance)
+        conf_bonus += 2.0
+        factors.append(f"✅ Ideal conditions ({temp}°C)")
+
+    # Clamp all multipliers
+    g_mult = round(max(0.75, min(1.20, g_mult)), 3)
+    c_mult = round(max(0.75, min(1.25, c_mult)), 3)
+    k_mult = round(max(0.85, min(1.25, k_mult)), 3)
+    s_mult = round(max(0.75, min(1.15, s_mult)), 3)
+    conf_bonus = round(max(-5.0, min(6.0, conf_bonus)), 1)
+
+    desc = " · ".join(factors) if factors else f"☁️ {cond.title()} ({temp}°C)"
+
+    # Build badge HTML
+    if rain >= 2 or wind >= 30 or temp >= 30 or temp <= 2:
+        badge_color = "#f97316"; badge_bg = "rgba(249,115,22,.12)"
+        badge_icon = "⚠️"
+    elif rain >= 0.5 or wind >= 20:
+        badge_color = "#fbbf24"; badge_bg = "rgba(251,191,36,.1)"
+        badge_icon = "🌦️"
+    else:
+        badge_color = "#4ade80"; badge_bg = "rgba(74,222,128,.1)"
+        badge_icon = "✅"
+
+    badge_html = (
+        f"<span style='display:inline-block;background:{badge_bg};color:{badge_color};"
+        f"border:1px solid {badge_color}40;padding:3px 10px;border-radius:20px;"
+        f"font-size:11px;font-family:DM Mono,monospace;font-weight:700;margin-top:6px;'>"
+        f"{badge_icon} {weather['condition'].title()} · {temp}°C · "
+        f"💨{wind}km/h · 🌧️{rain}mm</span>"
+    )
+
+    return {
+        "g_mult": g_mult, "c_mult": c_mult,
+        "k_mult": k_mult, "s_mult": s_mult,
+        "conf_bonus": conf_bonus,
+        "desc": desc, "badge_html": badge_html,
+        "available": True,
+        "temp": temp, "rain": rain, "wind": wind,
+    }
+
 @st.cache_data(ttl=600,show_spinner=False)
 def fetch_stats(team_id,venue):
     url=f"https://apiv3.apifootball.com/?action=get_events&team_id={team_id}&from={past_str}&to={today_str}&APIkey={API_KEY}"
@@ -710,22 +1332,70 @@ def fetch_events(date_from,date_to):
 
 # ── EDGE ENGINE ───────────────────────────────────────────────────────────────
 def generate_ai_pick(h_st,a_st,league,sniper_mode=False,h_cnt=5,a_cnt=5,**kwargs):
-    gm,cm,kdm,conf_pen=LEAGUE_PROFILE.get(league,DEFAULT_PROFILE)
-    markets = available_markets(league)  # which markets exist on books for this league
-    proj_g=(((h_st['gf']+a_st['ga'])/2)+((a_st['gf']+h_st['ga'])/2))*gm
-    proj_c_raw=(((h_st['cf']+a_st['ca'])/2)+((a_st['cf']+h_st['ca'])/2))*cm
-    proj_c = min(proj_c_raw, 13.0)  # hard cap — prevents garbage data inflating corner lines
-    proj_sot=((h_st['sotf']+a_st['sota'])/2)+((a_st['sotf']+h_st['sota'])/2)
-    proj_cd=(h_st['cards']+a_st['cards'])*kdm
+    gm,cm,kdm,pen = LEAGUE_PROFILE.get(league,DEFAULT_PROFILE)
+    markets  = available_markets(league)
+    g_mult   = kwargs.get('g_mult',   1.0)
+    c_mult   = kwargs.get('c_mult',   1.0)
+    k_mult   = kwargs.get('k_mult',   1.0)
+    s_mult   = kwargs.get('s_mult',   1.0)
+    ib       = kwargs.get('intel_bonus', 0.0)
+    # Weather multipliers stacked on top of player intel
+    wg = kwargs.get('w_g_mult', 1.0)
+    wc = kwargs.get('w_c_mult', 1.0)
+    wk = kwargs.get('w_k_mult', 1.0)
+    ws = kwargs.get('w_s_mult', 1.0)
+    wb = kwargs.get('w_conf_bonus', 0.0)
+    g_mult *= wg; c_mult *= wc; k_mult *= wk; s_mult *= ws; ib += wb
+
+    # ── HOME / AWAY VENUE WEIGHTING ─────────────────────────────────────────
+    # h_st = home team's stats IN HOME GAMES (already venue-split by fetch_stats)
+    # a_st = away team's stats IN AWAY GAMES (already venue-split by fetch_stats)
+    # We apply league-specific HA multipliers to each side separately,
+    # then combine. This means a strong home team playing at home gets
+    # their home boost AND the away team gets their away penalty.
+    hG, aG, hC, aC_card, ha_str = get_ha_profile(league)
+
+    # Goals: home team attack × home boost + away team attack × away drop
+    # Formula: weighted average of expected goals from each side
+    proj_g_home = (h_st['gf'] * hG + a_st['ga'] * hG) / 2   # home team scoring
+    proj_g_away = (a_st['gf'] * aG + h_st['ga'] * aG) / 2   # away team scoring
+    proj_g = (proj_g_home + proj_g_away) * gm * g_mult
+
+    # Corners: home teams win more corners (attacking intent + crowd pressure)
+    proj_c_home = (h_st['cf'] * hC + a_st['ca'] * hC) / 2
+    proj_c_away = (a_st['cf'] + h_st['ca']) / 2              # away side unaffected
+    proj_c_raw  = (proj_c_home + proj_c_away) * cm * c_mult
+    proj_c      = min(proj_c_raw, 12.0)
+
+    # SOT: follows goal projection shape
+    proj_sot = ((h_st['sotf'] * hG + a_st['sota'] * hG) / 2 +
+                (a_st['sotf'] * aG + h_st['sota'] * aG) / 2) * s_mult
+
+    # Cards: away team gets significantly more cards in most leagues
+    home_cards = h_st['cards'] * kdm              # home team cards (baseline)
+    away_cards = a_st['cards'] * kdm * aC_card    # away team gets the penalty
+    proj_cd = (home_cards + away_cards) * k_mult
+
+    # Home advantage confidence bonus: when the home team has strong
+    # historical home form, slightly boost confidence
+    ha_conf_bonus = ha_str * 1.2  # +1.2 to +3.6 pts depending on league
     sigs={
-        "Both score form":h_st['gf']>1.0 and a_st['gf']>0.8,
-        "High scoring":proj_g>=2.8,"Low scoring":proj_g<=2.2,
-        "High SOT":proj_sot>=8.0,"Low SOT":proj_sot<=6.5,
-        "High corners":proj_c>=9.0,"Low corners":proj_c<=8.0,
-        "SOT confirms goals":proj_g>=2.8 and proj_sot>=8.0,
-        "SOT confirms under":proj_g<=2.2 and proj_sot<=6.5,
+        "Both score form":       h_st['gf']>1.0 and a_st['gf']>0.8,
+        "High scoring":          proj_g>=2.8,
+        "Low scoring":           proj_g<=2.2,
+        "High SOT":              proj_sot>=8.0,
+        "Low SOT":               proj_sot<=6.5,
+        "High corners":          proj_c>=9.0,
+        "Low corners":           proj_c<=8.0,
+        "SOT confirms goals":    proj_g>=2.8 and proj_sot>=8.0,
+        "SOT confirms under":    proj_g<=2.2 and proj_sot<=6.5,
+        # ── Home/Away signals ──────────────────────────────────────────
+        "Strong home advantage": ha_str >= 2,
+        "Home goals boost":      h_st['gf'] * hG > 1.8,   # home team prolific at home
+        "Away card risk":         a_st['cards'] * aC_card > 2.5,  # away team card-prone
+        "Away attack suppressed": a_st['gf'] * aG < 0.9,  # away team struggles to score
     }
-    base=65.0-conf_pen; min_conf=82.0 if sniper_mode else 72.0; plays=[]
+    base=65.0-pen+max(0.0,ib)+ha_conf_bonus; min_conf=82.0 if sniper_mode else 72.0; plays=[]
     # Sample size penalty — reduce confidence for small samples
     avg_cnt = (h_cnt + a_cnt) / 2
     sample_pen = max(0.0, (5 - avg_cnt) * 4.0)   # -4pts per game below 5-game avg
@@ -739,14 +1409,17 @@ def generate_ai_pick(h_st,a_st,league,sniper_mode=False,h_cnt=5,a_cnt=5,**kwargs
             line=3.5 if proj_g>=4.2 else 2.5 if proj_g>=3.2 else 1.5; gap=proj_g-line
             if gap>=0.8:
                 conf=min(99.0,base+(gap/max(line,.01))*90)
-                if sigs["SOT confirms goals"]: conf=min(99.0,conf+5)
-                if sigs["Both score form"]:    conf=min(99.0,conf+3)
+                if sigs["SOT confirms goals"]:    conf=min(99.0,conf+5)
+                if sigs["Both score form"]:        conf=min(99.0,conf+3)
+                if sigs["Strong home advantage"]:  conf=min(99.0,conf+2.5)
+                if sigs["Home goals boost"]:       conf=min(99.0,conf+2.0)
                 plays.append((f"⚽ Over {line} Goals","goals",line,conf,{k:v for k,v in sigs.items() if k in ("SOT confirms goals","Both score form","High corners")}))
         elif proj_g<=2.2:
             line=1.5 if proj_g<=1.2 else 2.5 if proj_g<=1.8 else 3.5; gap=line-proj_g
             if gap>=0.8:
                 conf=min(99.0,base+(gap/max(line,.01))*90)
-                if sigs["SOT confirms under"]: conf=min(99.0,conf+5)
+                if sigs["SOT confirms under"]:       conf=min(99.0,conf+5)
+                if sigs["Away attack suppressed"]:   conf=min(99.0,conf+3.0)
                 plays.append((f"🔒 Under {line} Goals","under_goals",line,conf,{k:v for k,v in sigs.items() if k in ("SOT confirms under","Low corners","Low SOT")}))
 
     if "corners" in markets and avg_cnt >= min_sample_exotic:
@@ -762,28 +1435,15 @@ def generate_ai_pick(h_st,a_st,league,sniper_mode=False,h_cnt=5,a_cnt=5,**kwargs
         #   - If a key corner player is absent → apply absence multiplier, may drop below threshold
         #   - If 2+ corner specialists confirmed playing → confidence bonus
 
-        # Step 1: Apply player-intel corner multiplier if available
-        corner_player_mult = kwargs.get("c_mult", 1.0)
-        corner_intel       = kwargs.get("corner_intel", [])
-        players_confirmed  = kwargs.get("lineups_available", False)
+        # proj_c already includes player intel c_mult applied above
+        proj_c_adj = proj_c  # already capped at 12.0
+        players_confirmed = kwargs.get("lineups_available", False)
 
-        proj_c_adj = min(proj_c * corner_player_mult, 12.0)  # hard cap at 12
-
-        # Step 2: Count confirmed corner specialists playing/absent
-        specialists_playing = [d for d in corner_intel if d[1] == "playing"]
-        specialists_absent  = [d for d in corner_intel if d[1] == "absent"]
-        has_specialist      = len(specialists_playing) > 0
-
-        # Step 3: Player intel gate for Over corners
-        # If lineups are confirmed but NO corner specialist is playing → skip pick
-        # (base stats alone are not enough for corners — they are player-dependent)
-        corner_gate_passed = (not players_confirmed) or has_specialist or (len(corner_intel) == 0)
-
-        # Step 4: Confidence modifiers
-        specialist_bonus = min(8.0, len(specialists_playing) * 3.5)   # +3.5% per specialist
-        absence_penalty  = min(10.0, len(specialists_absent) * 4.0)   # -4% per absent specialist
-
-        corner_base_conf = base + specialist_bonus - absence_penalty
+        # Player intel is already baked into proj_c_adj and base confidence
+        # via the g_mult/c_mult/intel_bonus kwargs applied above.
+        # Corner gate: require lineups OR fall back to base stats only
+        corner_gate_passed = True   # always attempt; intel already adjusted proj
+        corner_base_conf   = base   # intel_bonus already included in base
 
         # ── OVER CORNERS ──────────────────────────────────────────────────────
         if proj_c_adj >= 9.5 and corner_gate_passed:
@@ -797,8 +1457,8 @@ def generate_ai_pick(h_st,a_st,league,sniper_mode=False,h_cnt=5,a_cnt=5,**kwargs
                 conf = min(99.0, corner_base_conf + (gap / max(line, .01)) * 70)
                 if sigs["High SOT"]: conf = min(99.0, conf + 4)
                 sigs_corner = {k:v for k,v in sigs.items() if k in ("High SOT","High scoring")}
-                if has_specialist:
-                    sigs_corner["Corner specialist playing"] = True
+                if c_mult > 1.05:
+                    sigs_corner["Player intel boosted"] = True
                 plays.append((f"🔥 Over {line} Corners","corners",line,conf,sigs_corner))
 
         # ── UNDER CORNERS ─────────────────────────────────────────────────────
@@ -809,11 +1469,11 @@ def generate_ai_pick(h_st,a_st,league,sniper_mode=False,h_cnt=5,a_cnt=5,**kwargs
             if gap >= 2.0:
                 conf = min(99.0, corner_base_conf + (gap / max(line, .01)) * 70)
                 if sigs["Low SOT"]: conf = min(99.0, conf + 4)
-                # Under corners STRENGTHENS when key wide players are absent
-                if specialists_absent:
-                    conf = min(99.0, conf + absence_penalty * 0.5)
+                # Under corners strengthened when c_mult < 1 (key wide player absent)
+                if c_mult < 0.95:
+                    conf = min(99.0, conf + (1.0 - c_mult) * 20)
                 sigs_corner = {k:v for k,v in sigs.items() if k in ("Low SOT","Low scoring")}
-                if specialists_absent:
+                if c_mult < 0.95:
                     sigs_corner["Key wide player absent"] = True
                 plays.append((f"🛡️ Under 8.5 Corners","under_corners",8.5,conf,sigs_corner))
 
@@ -822,7 +1482,9 @@ def generate_ai_pick(h_st,a_st,league,sniper_mode=False,h_cnt=5,a_cnt=5,**kwargs
             valid=[l for l in [3.5,4.5,5.5,6.5] if l<=proj_cd-1.5]
             if valid:
                 line=max(valid);gap=proj_cd-line;conf=min(99.0,base+(gap/max(line,.01))*55)
-                plays.append((f"🟨 Over {line} Cards","cards",line,conf,{"High card league":kdm>=1.1}))
+                if sigs["Away card risk"]: conf=min(99.0,conf+3.5)  # away team historically card-prone
+                if sigs["Strong home advantage"]: conf=min(99.0,conf+2.0)  # referee bias in strong HA leagues
+                plays.append((f"🟨 Over {line} Cards","cards",line,conf,{"High card league":kdm>=1.1,"Away card risk":sigs["Away card risk"],"Home advantage":sigs["Strong home advantage"]}))
         elif proj_cd<=2.5:
             valid=[l for l in [3.5,4.5] if l>=proj_cd+1.5]
             if valid:
@@ -1036,51 +1698,41 @@ with tab3:
                         a_st,a_cnt=fetch_stats(m.get("match_awayteam_id"),"away")
                     if not h_st or not a_st: st.warning("⚠️ Insufficient data."); continue
                     if h_cnt<3 or a_cnt<3: st.info(f"📉 Low sample: {home}({h_cnt}) / {away}({a_cnt})")
-                    # Fetch lineups for corner intelligence
+                    # ── Dynamic player intelligence ──────────────────────────────────
                     confirmed_names = fetch_lineups_for_match(m.get("match_id",""))
-                    c_mult_val, corner_intel_data = get_corner_intel(
-                        m.get("match_id",""), home, away, confirmed_names)
-                    lineups_ready = len(confirmed_names) > 0
+                    h_pstats = fetch_player_stats(m.get("match_hometeam_id",""), past_str, today_str)
+                    a_pstats = fetch_player_stats(m.get("match_awayteam_id",""), past_str, today_str)
+                    impact   = compute_player_impact(h_pstats, a_pstats, confirmed_names, home, away)
+                    lineups_ready = impact["lineups_available"]
+
+                    # ── Weather intelligence ──────────────────────────────────────────
+                    stadium_coords = get_stadium_coords(home)
+                    weather_impact = {"g_mult":1.0,"c_mult":1.0,"k_mult":1.0,"s_mult":1.0,"conf_bonus":0.0,"available":False,"badge_html":""}
+                    if stadium_coords:
+                        raw_wx = fetch_weather(stadium_coords[0], stadium_coords[1],
+                                               m.get("match_date",today_str), t_m)
+                        weather_impact = compute_weather_impact(raw_wx)
 
                     pick,p_type,thresh,conf,sigs,all_plays=generate_ai_pick(
                         h_st,a_st,l_name,sniper_mode,h_cnt,a_cnt,
-                        c_mult=c_mult_val,
-                        corner_intel=corner_intel_data,
-                        lineups_available=lineups_ready
+                        g_mult=impact["g_mult"],
+                        c_mult=impact["c_mult"],
+                        k_mult=impact["k_mult"],
+                        s_mult=impact["s_mult"],
+                        intel_bonus=impact["conf_bonus"],
+                        lineups_available=lineups_ready,
+                        w_g_mult=weather_impact["g_mult"],
+                        w_c_mult=weather_impact["c_mult"],
+                        w_k_mult=weather_impact["k_mult"],
+                        w_s_mult=weather_impact["s_mult"],
+                        w_conf_bonus=weather_impact["conf_bonus"],
                     )
                     avail_mkts = available_markets(l_name)
                     mkt_icons  = {"goals":"⚽ Goals","corners":"🔥 Corners","cards":"🟨 Cards","sot":"🎯 SOT"}
                     mkt_tags   = " ".join(f"<span style='font-size:10px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.25);padding:2px 6px;border-radius:8px;font-family:DM Mono,monospace;'>{mkt_icons[k]}</span>" for k in mkt_icons if k in avail_mkts)
                     ref=m.get("match_referee","")
 
-                    # Build corner intel HTML panel
-                    corner_panel_html = ""
-                    if corner_intel_data:
-                        rows = ""
-                        for cname, cstatus, crole, cmult, cside in corner_intel_data[:6]:
-                            if cstatus == "playing":
-                                tag = f"<span style='background:rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.3);padding:2px 7px;border-radius:8px;font-size:10px;font-family:DM Mono,monospace;font-weight:700;'>▶ PLAYING</span>"
-                                mult_col = f"<span style='color:#4ade80;font-family:DM Mono,monospace;font-size:11px;font-weight:700;'>×{cmult:.2f} corners</span>"
-                            elif cstatus == "absent":
-                                tag = f"<span style='background:rgba(239,68,68,.1);color:#f87171;border:1px solid rgba(239,68,68,.25);padding:2px 7px;border-radius:8px;font-size:10px;font-family:DM Mono,monospace;font-weight:700;'>✗ ABSENT</span>"
-                                mult_col = f"<span style='color:#f87171;font-family:DM Mono,monospace;font-size:11px;font-weight:700;'>×{cmult:.2f} corners</span>"
-                            else:
-                                tag = f"<span style='background:rgba(251,191,36,.1);color:#fbbf24;border:1px solid rgba(251,191,36,.25);padding:2px 7px;border-radius:8px;font-size:10px;font-family:DM Mono,monospace;font-weight:700;'>? UNCONFIRMED</span>"
-                                mult_col = f"<span style='color:#fbbf24;font-family:DM Mono,monospace;font-size:11px;'>lineup pending</span>"
-                            rows += f"<div style='display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #09111c;'><span style='color:#e2e8f0;font-weight:600;font-size:12px;flex:1;'>{cname}</span><span style='color:#4b6080;font-size:11px;'>{cside.upper()}</span>{tag}{mult_col}</div>"
-
-                        lineup_status = "✅ Lineups confirmed" if lineups_ready else "⏳ Lineup pending (using base stats)"
-                        ls_color = "#4ade80" if lineups_ready else "#fbbf24"
-                        corner_panel_html = f"""
-                        <div style='background:linear-gradient(135deg,#060b18,#080d20);border:1px solid #1e3a5f;border-radius:10px;padding:14px;margin-top:10px;'>
-                            <div style='font-family:DM Mono,monospace;font-size:10px;color:#60a5fa;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;'>
-                                🔲 Corner Intelligence &nbsp;<span style='color:{ls_color};font-size:10px;'>{lineup_status}</span>
-                            </div>
-                            {rows}
-                            <div style='margin-top:8px;font-family:DM Mono,monospace;font-size:11px;color:#334d66;'>
-                                Combined corner multiplier: <span style='color:#e2e8f0;font-weight:700;'>×{c_mult_val:.2f}</span>
-                            </div>
-                        </div>"""
+                    intel_panel_html = player_intel_html(impact, p_type)
                     ref_html=f"<a href='https://www.google.com/search?q={ref.replace(' ','+')}+referee+stats' target='_blank' class='ref-tag'>⚖️ {ref}</a>" if ref else "<span class='ref-tag'>⚖️ TBD</span>"
                     odds_key=f"odds_{m.get('match_id','')}"
                     if odds_key not in st.session_state: st.session_state[odds_key]=1.90
@@ -1088,23 +1740,21 @@ with tab3:
                     with c_pick:
                         is_sniper=conf>=82; card_cls="sniper-card" if is_sniper else "pick-card"; lbl_cls="sniper-label" if is_sniper else "pick-label"
                         badge="<div class='sniper-badge'>🎯 SNIPER PICK</div>" if is_sniper else ""
+                        wx_badge = weather_impact.get("badge_html","")
                         st.markdown(
                             f"<div class='{card_cls}'>{badge}"
                             f"<div class='{lbl_cls}'>{pick}</div>"
                             f"{ref_html}"
+                            f"{wx_badge}"
                             f"{conf_bar_html(conf,'#f97316' if is_sniper else '#16a34a')}"
                             f"{signals_html(sigs)}"
                             f"<div style='margin-top:8px;'>{mkt_tags}</div>"
                             f"</div>",
                             unsafe_allow_html=True
                         )
-                        # Corner intel panel (shown separately below the card)
-                        if corner_panel_html and ("corner" in p_type.lower() if p_type else False):
-                            st.markdown(corner_panel_html, unsafe_allow_html=True)
-                        elif corner_panel_html and corner_intel_data:
-                            # Show collapsed if corners not the main pick but intel exists
-                            with st.expander("🔲 Corner Intelligence", expanded=False):
-                                st.markdown(corner_panel_html, unsafe_allow_html=True)
+                        # Player intel panel — always shown when data available
+                        if intel_panel_html:
+                            st.markdown(intel_panel_html, unsafe_allow_html=True)
                         user_odds=st.number_input("Enter bookmaker odds (decimal)",min_value=1.01,max_value=50.0,step=0.05,value=st.session_state[odds_key],key=odds_key)
                         if conf>0 and user_odds>1.0:
                             kelly_stake=kelly_fraction(conf_to_prob(conf),user_odds,kelly_divisor)
@@ -1112,10 +1762,26 @@ with tab3:
                             st.markdown(value_panel_html(conf,user_odds,kelly_divisor)+(f"<div style='text-align:center;margin-top:6px;font-size:13px;color:#64748b;'>= <b style='color:#e2e8f0;'>{actual_stake} units</b></div>" if kelly_stake>0 else ""),unsafe_allow_html=True)
                     with c_stats:
                         gm,cm,kdm,_=LEAGUE_PROFILE.get(l_name,DEFAULT_PROFILE)
-                        pg=(((h_st['gf']+a_st['ga'])/2)+((a_st['gf']+h_st['ga'])/2))*gm
-                        pc=min(13.0,(((h_st['cf']+a_st['ca'])/2)+((a_st['cf']+h_st['ca'])/2))*cm)
-                        pcd=(h_st['cards']+a_st['cards'])*kdm; psot=h_st['sotf']+a_st['sotf']
-                        st.markdown(f"<div class='stats-panel'><div class='stats-title'>Math Edge</div><div class='stat-row'><span>xG (adj)</span><span class='stat-val'>{pg:.2f}</span></div><div class='stat-row'><span>Corners (adj)</span><span class='stat-val'>{pc:.1f}</span></div><div class='stat-row'><span>Cards (adj)</span><span class='stat-val'>{pcd:.1f}</span></div><div class='stat-row'><span>SOT</span><span class='stat-val'>{psot:.1f}</span></div><div class='stat-row'><span>Sample H/A</span><span class='stat-val'>{h_cnt}/{a_cnt}</span></div></div>",unsafe_allow_html=True)
+                        hG,aG,hC,aC_c,ha_s=get_ha_profile(l_name)
+                        # HA-weighted projections for display
+                        pg=((h_st['gf']*hG+a_st['ga']*hG)/2+(a_st['gf']*aG+h_st['ga']*aG)/2)*gm
+                        pc=min(12.0,((h_st['cf']*hC+a_st['ca']*hC)/2+(a_st['cf']+h_st['ca'])/2)*cm)
+                        pcd=(h_st['cards']+a_st['cards']*aC_c)*kdm
+                        psot=((h_st['sotf']*hG+a_st['sota']*hG)/2+(a_st['sotf']*aG+h_st['sota']*aG)/2)
+                        ha_labels={0:'Neutral',1:'Moderate',2:'Strong',3:'Very Strong'}
+                        ha_icon='🏠' if ha_s>=2 else '⚖️'
+                        st.markdown(f"<div class='stats-panel'><div class='stats-title'>Math Edge</div>"
+                            f"<div class='stat-row'><span>xG (HA-adj)</span><span class='stat-val'>{pg:.2f}</span></div>"
+                            f"<div class='stat-row'><span>Corners (adj)</span><span class='stat-val'>{pc:.1f}</span></div>"
+                            f"<div class='stat-row'><span>Cards (adj)</span><span class='stat-val'>{pcd:.1f}</span></div>"
+                            f"<div class='stat-row'><span>SOT (adj)</span><span class='stat-val'>{psot:.1f}</span></div>"
+                            f"<div class='stat-row'><span>Sample H/A</span><span class='stat-val'>{h_cnt}/{a_cnt}</span></div>"
+                            f"<div class='stat-row'><span>{ha_icon} Home Advantage</span><span class='stat-val' style='font-size:12px;'>{ha_labels.get(ha_s,'?')}</span></div>"
+                            f"<div class='stat-row'><span>Home goal boost</span><span class='stat-val' style='color:#4ade80;'>×{hG:.2f}</span></div>"
+                            f"<div class='stat-row'><span>Away card risk</span><span class='stat-val' style='color:#f97316;'>×{aC_c:.2f}</span></div>"
+                            f"<div class='stat-row'><span>🌤️ Weather</span><span class='stat-val' style='font-size:11px;'>{weather_impact.get('condition','N/A').title() if weather_impact.get('available') else 'Unavailable'}</span></div>"
+                            f"<div class='stat-row'><span>Temp / Rain / Wind</span><span class='stat-val' style='font-size:11px;'>{weather_impact.get('temp','?'):.0f}°C · {weather_impact.get('rain',0):.1f}mm · {weather_impact.get('wind',0):.0f}km/h</span></div>"
+                            f"</div>",unsafe_allow_html=True)
                         if len(all_plays)>1:
                             st.markdown("<div style='margin-top:10px;font-size:11px;color:#475569;'>Alt plays:</div>",unsafe_allow_html=True)
                             for alt in all_plays[1:3]: st.markdown(f"<div style='font-size:12px;color:#64748b;padding:3px 0;'>• {alt[0]} ({alt[3]:.0f}%)</div>",unsafe_allow_html=True)
