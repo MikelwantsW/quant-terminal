@@ -781,28 +781,49 @@ MARKET_DEPTH = {
 }
 DEFAULT_MARKETS = {"goals"}  # fallback for unknown leagues — goals only
 
-# Standard card lines offered by major books
-# Betano: 3.5, 4.5, 5.5   |   Bet365: 3.5, 4.5, 5.5   |   1xBet: 2.5-6.5
-STANDARD_CARD_LINES = [3.5, 4.5, 5.5]
+# ── CARD COUNTING SYSTEMS ─────────────────────────────────────────────────────
+# Betano: Yellow=1, Red=2, Max per player=3. Lines typically 4.5/5.5/6.5
+# Bet365/standard: Yellow=1. Lines typically 2.5/3.5/4.5
+RED_CARD_RATE = {
+    "La Liga":0.32,"Serie A":0.28,"Ligue 1":0.25,"Premier League":0.22,
+    "Bundesliga":0.18,"UEFA Champions League":0.20,"UEFA Europa League":0.22,
+    "UEFA Europa Conference League":0.20,"Championship":0.28,"Süper Lig":0.35,
+    "Greek Super League":0.38,"Argentine Primera División":0.40,
+    "Brasileirao Serie A":0.32,"Scottish Premiership":0.25,
+    "Eredivisie":0.20,"Primeira Liga":0.28,
+}
+DEFAULT_RED_RATE = 0.25
 
-def get_card_line_options(proj_cd: float) -> list:
-    """
-    Return all standard card lines with edge direction for the given projection.
-    This lets the user pick whichever line their book offers.
-    Returns list of (line, direction, gap, note)
-    """
-    options = []
-    for line in STANDARD_CARD_LINES:
-        gap = proj_cd - line
-        if gap >= 1.0:
-            direction = "OVER"
-            note = "Strong edge"   if gap >= 2.0 else "Moderate edge"
-            options.append((line, direction, abs(gap), note))
+def yellows_to_card_points(yellow_proj: float, league: str) -> float:
+    red_rate = RED_CARD_RATE.get(league, DEFAULT_RED_RATE)
+    return round(yellow_proj + red_rate * 2.0, 2)
+
+CARD_LINES_YELLOW = [2.5, 3.5, 4.5, 5.5]
+CARD_LINES_POINTS = [3.5, 4.5, 5.5, 6.5]
+
+def get_card_line_options(proj_yellows: float, league: str = "", card_mode: str = "both") -> list:
+    proj_pts = yellows_to_card_points(proj_yellows, league)
+    options  = []
+    def evaluate(proj, line, sys_label):
+        gap = proj - line
+        if gap >= 0.3:
+            note = "Strong" if gap >= 2.0 else "Moderate" if gap >= 1.0 else "Slight"
+            options.append((line, "OVER", round(gap,2), note, sys_label))
         elif gap <= -1.0:
-            direction = "UNDER"
-            note = "Strong edge"   if abs(gap) >= 2.0 else "Moderate edge"
-            options.append((line, direction, abs(gap), note))
-    return sorted(options, key=lambda x: x[2], reverse=True)
+            note = "Strong" if abs(gap) >= 2.0 else "Moderate"
+            options.append((line, "UNDER", round(abs(gap),2), note, sys_label))
+    if card_mode in ("yellow","both"):
+        for ln in CARD_LINES_YELLOW:
+            evaluate(proj_yellows, ln, "Yellow cards")
+    if card_mode in ("points","both"):
+        for ln in CARD_LINES_POINTS:
+            evaluate(proj_pts, ln, "Card pts (Betano)")
+    seen = {}
+    for opt in options:
+        key = (opt[0], opt[1])
+        if key not in seen or opt[2] > seen[key][2]:
+            seen[key] = opt
+    return sorted(seen.values(), key=lambda x: x[2], reverse=True)
 
 def available_markets(league: str) -> set:
     """Return the set of market types available for this league on sportsbooks."""
@@ -1669,6 +1690,19 @@ with st.sidebar:
     if tier_c:
         st.markdown("<div style='background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.25);border-radius:6px;padding:8px 10px;font-size:11px;color:#fb923c;margin-top:4px;'>⚠️ Tier C games may not appear on major books (Betano, Bet365, Betway). Accuracy stats may be inflated.</div>",unsafe_allow_html=True)
     st.divider()
+    st.divider()
+    st.markdown("**🟨 Card Counting System**")
+    card_mode = st.radio(
+        "Your book's card system",
+        ["both","points","yellow"],
+        format_func=lambda x: {
+            "both":"Show both systems",
+            "points":"🟠 Card Points — Betano (Y=1, R=2)",
+            "yellow":"🟡 Raw Yellow Cards",
+        }[x],
+        index=0)
+    st.session_state["card_mode"] = card_mode
+    st.divider()
     st.markdown("**💰 Kelly Calculator**")
     kelly_divisor=st.slider("Kelly fraction (safety)",2,8,4)
     bankroll=st.number_input("Bankroll",min_value=10.0,value=1000.0,step=50.0)
@@ -1936,33 +1970,45 @@ with tab3:
                     ref=m.get("match_referee","")
 
                     intel_panel_html = player_intel_html(impact, p_type)
-                    # Card line options (all standard lines for cards market)
+                    # Card line options — all systems
                     card_lines_html = ""
                     if p_type in ("cards","under_cards"):
-                        _pcd = proj_cd if "proj_cd" in dir() else 0
-                        _card_opts = get_card_line_options(
-                            (h_st["cards"]+a_st["cards"]) * 
-                            LEAGUE_PROFILE.get(l_name, DEFAULT_PROFILE)[2] *
-                            impact.get("k_mult",1.0) * weather_impact.get("k_mult",1.0)
-                        )
+                        _card_mode    = st.session_state.get("card_mode","both")
+                        _proj_yellows = ((h_st["cards"]+a_st["cards"]) *
+                                        LEAGUE_PROFILE.get(l_name,DEFAULT_PROFILE)[2] *
+                                        impact.get("k_mult",1.0) * weather_impact.get("k_mult",1.0))
+                        _proj_pts     = yellows_to_card_points(_proj_yellows, l_name)
+                        _card_opts    = get_card_line_options(_proj_yellows, l_name, _card_mode)
                         if _card_opts:
-                            _rows = "".join(
-                                f"<div style='display:flex;justify-content:space-between;"
-                                f"padding:5px 0;border-bottom:1px solid #09111c;'>"
-                                f"<span style='font-family:DM Mono,monospace;font-size:12px;"
-                                f"color:#e2e8f0;font-weight:700;'>{d} {l} Cards</span>"
-                                f"<span style='color:{"#4ade80" if g>=2 else "#fbbf24"};font-size:11px;'>{n} · gap {g:.1f}</span>"
-                                f"</div>"
-                                for l,d,g,n in _card_opts)
+                            _rc = RED_CARD_RATE.get(l_name, DEFAULT_RED_RATE)
+                            _row_parts = []
+                            for _cl,_cd,_cg,_cn,_cs in _card_opts:
+                                _cc = "#4ade80" if _cg>=2 else "#fbbf24" if _cg>=1 else "#60a5fa"
+                                _row_parts.append(
+                                    f"<div style='display:flex;align-items:center;padding:6px 0;"
+                                    f"border-bottom:1px solid #09111c;gap:6px;'>"
+                                    f"<span style='font-family:DM Mono;font-size:13px;"
+                                    f"color:#e2e8f0;font-weight:700;min-width:120px;'>{_cd} {_cl} Cards</span>"
+                                    f"<span style='font-size:10px;color:#64748b;flex:1;'>{_cs}</span>"
+                                    f"<span style='color:{_cc};font-size:11px;'>{_cn} Δ{_cg:.1f}</span>"
+                                    f"</div>"
+                                )
+                            _rows_str = "".join(_row_parts)
                             card_lines_html = (
-                                "<div style='background:#080d14;border:1px solid #1e293b;"
-                                "border-top:2px solid #fbbf24;border-radius:8px;"
-                                "padding:12px;margin-top:10px;'>"
-                                "<div style='font-family:DM Mono,monospace;font-size:10px;"
-                                "color:#fbbf24;letter-spacing:1px;text-transform:uppercase;"
-                                "margin-bottom:8px;'>"
-                                "🟨 All Standard Card Lines — Pick Whichever Your Book Offers</div>"
-                                f"{_rows}</div>")
+                                f"<div style='background:#080d14;border:1px solid #1e293b;"
+                                f"border-top:2px solid #fbbf24;border-radius:8px;"
+                                f"padding:14px;margin-top:10px;'>"
+                                f"<div style='display:flex;justify-content:space-between;"
+                                f"margin-bottom:8px;'>"
+                                f"<span style='font-family:DM Mono;font-size:10px;"
+                                f"color:#fbbf24;letter-spacing:1px;text-transform:uppercase;'>"
+                                f"🟨 Card Lines</span>"
+                                f"<span style='font-size:10px;color:#64748b;'>"
+                                f"Yellows: {_proj_yellows:.1f} | Card pts: {_proj_pts:.1f}</span></div>"
+                                f"<div style='font-size:11px;color:#475569;margin-bottom:8px;'>"
+                                f"Betano: Y=1 R=2 | ~{_rc:.2f} reds/game | {l_name}</div>"
+                                f"{_rows_str}</div>"
+                            )
                     ref_html=f"<a href='https://www.google.com/search?q={ref.replace(' ','+')}+referee+stats' target='_blank' class='ref-tag'>⚖️ {ref}</a>" if ref else "<span class='ref-tag'>⚖️ TBD</span>"
                     odds_key=f"odds_{m.get('match_id','')}"
                     if odds_key not in st.session_state: st.session_state[odds_key]=1.90
