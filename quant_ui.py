@@ -197,7 +197,10 @@ ALLOWED_COUNTRY_KEYWORDS = {
 # Fuzzy map — only called AFTER country whitelist check passes
 _FUZZY_MAP = {
     "ligue 1":           "Ligue 1",
-    "premier league":    "Premier League",
+    # "premier league" alone is too broad — matches Sudan/Rwanda/African leagues
+    # Only match when preceded by "english" or "england" or alone as exact phrase
+    "english premier league": "Premier League",
+    "england premier league": "Premier League",
     "la liga":           "La Liga",
     "primera division":  "La Liga",
     "serie a":           "Serie A",
@@ -235,25 +238,63 @@ _FUZZY_MAP = {
 # Explicit BLOCK list — leagues whose names partially match allowed keywords
 # but are NOT on major sportsbooks
 BLOCKED_LEAGUE_KEYWORDS = {
+    # ── Africa (comprehensive) ────────────────────────────────────────────────
     "egypt","egyptian","ethiopia","ethiopian","mauritania","mauritanian",
-    "romania","romanian","israel","israeli","algeria","algerian",
-    "morocco","moroccan","tunisia","tunisian","iran","iranian",
-    "iraq","iraqi","kenya","kenyan","ghana","ghanaian",
-    "cameroon","zimbabwe","zambia","tanzania","uganda",
-    "south africa","nigerian","nigeria","senegal","ivory coast",
-    "angola","congo","mali","guinea","liberia","sierra leone",
-    "uae","qatar","kuwait","bahrain","oman","jordan","lebanon",
+    "algeria","algerian","morocco","moroccan","tunisia","tunisian",
+    "kenya","kenyan","ghana","ghanaian","cameroon","zimbabwe","zambia",
+    "tanzania","uganda","south africa","south african",
+    "nigeria","nigerian","senegal","senegalese","ivory coast","côte d'ivoire",
+    "angola","mali","guinea","liberia","sierra leone","rwanda","rwandan",
+    "sudan","sudanese","south sudan","burundi","mozambique","madagascar",
+    "namibia","botswana","malawi","eritrea","djibouti","somalia","ethiopia",
+    "chad","niger","togo","benin","burkina","gabon","equatorial guinea",
+    "central african","libya","mauritius","reunion","cape verde",
+    # specific African clubs that slip through
+    "al-merreikh","el merreikh","etincelles","apr fc","rayon sports",
+    "al hilal omdurman","al-hilal omdurman","gor mahia","tp mazembe",
+    "al ahly","zamalek","esperance","wydad","raja casablanca",
+    # ── Middle East ───────────────────────────────────────────────────────────
+    "iran","iranian","iraq","iraqi","uae","qatar","kuwait",
+    "bahrain","oman","jordan","lebanon","syria","yemen",
+    # ── Central/East Asia ────────────────────────────────────────────────────
     "uzbekistan","kazakhstan","azerbaijan","armenia","georgia",
     "vietnam","indonesia","malaysia","thailand","south korea","china",
-    "india","pakistan","bangladesh","philippines","myanmar",
+    "india","pakistan","bangladesh","philippines","myanmar","cambodia",
+    "laos","mongolia","nepal","sri lanka","maldives",
+    # ── Americas (non-top leagues) ────────────────────────────────────────────
     "mexico","colombia","chile","peru","ecuador","venezuela","bolivia",
-    "paraguay","uruguay","costa rica","honduras","guatemala",
+    "paraguay","costa rica","honduras","guatemala","panama","nicaragua",
+    "el salvador","jamaica","trinidad","barbados","haiti","cuba",
+    # NOTE: Uruguay excluded — could have edge cases, handled by ALLOWED list
+    # ── Lower divisions / amateur ────────────────────────────────────────────
     "scotland a league","highland","lowland",
     "amateur","reserve","u21","u23","u19","u18","youth","women","w league",
     "second division","third division","division 2","division 3",
     "liga 2","liga 3","serie b","serie c","division b",
-    "ligue 2","championship 2","primeira b",
+    "ligue 2","championship 2","primeira b","2. bundesliga",
+    "national league","vanarama","non-league",
+    # ── Romania / Israel / other non-bookable European ───────────────────────
+    "romania","romanian","israel","israeli","bulgaria","bulgarian",
+    "croatia","croatian","slovenia","slovenian","hungary","hungarian",
+    "slovakia","slovakian","albania","albanian","latvia","lithuanian",
+    "estonia","estonian","moldova","moldovan","belarus","belarusian",
+    "ukraine","ukrainian","cyprus","cypriot","luxembourg","liechtenstein",
+    "faroe","iceland","andorra","malta","san marino","northern ireland",
 }
+
+# Additional exact team name blocks (clubs that slip through league filter)
+BLOCKED_TEAM_NAMES = {
+    "al-merreikh","el merreikh","merreikh","etincelles","apr fc","rayon sports",
+    "al hilal omdurman","omdurman","gor mahia","tp mazembe","vita club",
+    "al ahly","zamalek","esperance","wydad","raja","renaissance berkane",
+    "mamelodi sundowns","orlando pirates","kaizer chiefs","al merrikh",
+    "al-merrikh","young africans","simba sc","azam fc",
+}
+
+def is_team_blocked(home: str, away: str) -> bool:
+    """Return True if either team name contains a blocked keyword."""
+    combined = (home + " " + away).lower()
+    return any(bt in combined for bt in BLOCKED_TEAM_NAMES)
 
 def canonical_league(name: str) -> str:
     """
@@ -262,6 +303,9 @@ def canonical_league(name: str) -> str:
     """
     if name in TOP_LEAGUES:
         return name   # exact match — fast path
+    # Exact phrase "Premier League" with no prefix = English PL
+    if name.strip().lower() == "premier league":
+        return "Premier League"
 
     low = name.lower()
 
@@ -736,6 +780,29 @@ MARKET_DEPTH = {
     "J1 League":                        {"goals"},          # ← The exact bug you hit
 }
 DEFAULT_MARKETS = {"goals"}  # fallback for unknown leagues — goals only
+
+# Standard card lines offered by major books
+# Betano: 3.5, 4.5, 5.5   |   Bet365: 3.5, 4.5, 5.5   |   1xBet: 2.5-6.5
+STANDARD_CARD_LINES = [3.5, 4.5, 5.5]
+
+def get_card_line_options(proj_cd: float) -> list:
+    """
+    Return all standard card lines with edge direction for the given projection.
+    This lets the user pick whichever line their book offers.
+    Returns list of (line, direction, gap, note)
+    """
+    options = []
+    for line in STANDARD_CARD_LINES:
+        gap = proj_cd - line
+        if gap >= 1.0:
+            direction = "OVER"
+            note = "Strong edge"   if gap >= 2.0 else "Moderate edge"
+            options.append((line, direction, abs(gap), note))
+        elif gap <= -1.0:
+            direction = "UNDER"
+            note = "Strong edge"   if abs(gap) >= 2.0 else "Moderate edge"
+            options.append((line, direction, abs(gap), note))
+    return sorted(options, key=lambda x: x[2], reverse=True)
 
 def available_markets(league: str) -> set:
     """Return the set of market types available for this league on sportsbooks."""
@@ -1352,6 +1419,11 @@ def fetch_events(date_from,date_to):
                 raw_lg = m.get("league_name","")
                 canon  = canonical_league(raw_lg)
                 if canon != "__BLOCKED__" and canon in TOP_LEAGUES:
+                    # Also block by team name (catches clubs in mislabelled leagues)
+                    home_t = m.get("match_hometeam_name","")
+                    away_t = m.get("match_awayteam_name","")
+                    if is_team_blocked(home_t, away_t):
+                        continue
                     m["league_name"] = canon   # normalise in-place
                     out.append(m)
             return out
@@ -1864,6 +1936,33 @@ with tab3:
                     ref=m.get("match_referee","")
 
                     intel_panel_html = player_intel_html(impact, p_type)
+                    # Card line options (all standard lines for cards market)
+                    card_lines_html = ""
+                    if p_type in ("cards","under_cards"):
+                        _pcd = proj_cd if "proj_cd" in dir() else 0
+                        _card_opts = get_card_line_options(
+                            (h_st["cards"]+a_st["cards"]) * 
+                            LEAGUE_PROFILE.get(l_name, DEFAULT_PROFILE)[2] *
+                            impact.get("k_mult",1.0) * weather_impact.get("k_mult",1.0)
+                        )
+                        if _card_opts:
+                            _rows = "".join(
+                                f"<div style='display:flex;justify-content:space-between;"
+                                f"padding:5px 0;border-bottom:1px solid #09111c;'>"
+                                f"<span style='font-family:DM Mono,monospace;font-size:12px;"
+                                f"color:#e2e8f0;font-weight:700;'>{d} {l} Cards</span>"
+                                f"<span style='color:{"#4ade80" if g>=2 else "#fbbf24"};font-size:11px;'>{n} · gap {g:.1f}</span>"
+                                f"</div>"
+                                for l,d,g,n in _card_opts)
+                            card_lines_html = (
+                                "<div style='background:#080d14;border:1px solid #1e293b;"
+                                "border-top:2px solid #fbbf24;border-radius:8px;"
+                                "padding:12px;margin-top:10px;'>"
+                                "<div style='font-family:DM Mono,monospace;font-size:10px;"
+                                "color:#fbbf24;letter-spacing:1px;text-transform:uppercase;"
+                                "margin-bottom:8px;'>"
+                                "🟨 All Standard Card Lines — Pick Whichever Your Book Offers</div>"
+                                f"{_rows}</div>")
                     ref_html=f"<a href='https://www.google.com/search?q={ref.replace(' ','+')}+referee+stats' target='_blank' class='ref-tag'>⚖️ {ref}</a>" if ref else "<span class='ref-tag'>⚖️ TBD</span>"
                     odds_key=f"odds_{m.get('match_id','')}"
                     if odds_key not in st.session_state: st.session_state[odds_key]=1.90
@@ -1884,8 +1983,34 @@ with tab3:
                             unsafe_allow_html=True
                         )
                         # Player intel panel — always shown when data available
+                        if card_lines_html:
+                            st.markdown(card_lines_html, unsafe_allow_html=True)
                         if intel_panel_html:
                             st.markdown(intel_panel_html, unsafe_allow_html=True)
+                        # ── Telegram alert button ──────────────────────────────
+                        _tg_tok = st.session_state.get("tg_token","")
+                        _tg_cid = st.session_state.get("tg_chat","")
+                        _tg_min = st.session_state.get("tg_min_conf",85)
+                        if _tg_tok and _tg_cid and conf > 0 and p_type != "pass":
+                            _wx_desc = weather_impact.get("desc","") if weather_impact.get("available") else ""
+                            _tg_msg  = format_telegram_pick(
+                                f"{home} vs {away}", l_name, pick,
+                                conf, t, book_tier(l_name) or "?", _wx_desc)
+                            if conf >= _tg_min:
+                                # Auto-send if above threshold
+                                _sent_key = f"tg_sent_{m.get('match_id','')}_auto"
+                                if not st.session_state.get(_sent_key):
+                                    if send_telegram(_tg_tok, _tg_cid, _tg_msg):
+                                        st.session_state[_sent_key] = True
+                                        st.success("🔔 Alert sent to Telegram!")
+                            else:
+                                # Manual send button for picks below threshold
+                                _btn_key = f"tg_btn_{m.get('match_id','')}" 
+                                if st.button(f"🔔 Send to Telegram ({conf:.0f}%)", key=_btn_key):
+                                    if send_telegram(_tg_tok, _tg_cid, _tg_msg):
+                                        st.success("✅ Sent!")
+                                    else:
+                                        st.error("❌ Failed — check token & chat ID")
                         user_odds=st.number_input("Enter bookmaker odds (decimal)",min_value=1.01,max_value=50.0,step=0.05,value=st.session_state[odds_key],key=odds_key)
                         if conf>0 and user_odds>1.0:
                             kelly_stake=kelly_fraction(conf_to_prob(conf),user_odds,kelly_divisor)
@@ -1933,6 +2058,7 @@ with tab4:
     with acc_col2:
         strict_acc = st.toggle("📚 Strict Bookable Only", value=True,
                                help="Only count picks from Tier A + Tier B leagues that are on Bet365/Betway/Betano")
+        st.session_state["_strict_acc"] = strict_acc
     acc_filter_leagues = STRICT_BOOKABLE if strict_acc else ACTIVE_LEAGUES
 
     history = load_history()
@@ -1960,7 +2086,8 @@ with tab4:
                 for m in finished_yday:
                     lg_name = m.get("league_name","")
                     if lg_name not in acc_filter_leagues: continue
-                    if strict_acc and book_tier(lg_name) not in ("A","B"): continue
+                    _strict = st.session_state.get("_strict_acc", True)
+                    if _strict and book_tier(lg_name) not in ("A","B"): continue
                     h_st,_ = fetch_stats(m.get("match_hometeam_id"),"home")
                     a_st,_ = fetch_stats(m.get("match_awayteam_id"),"away")
                     if not h_st or not a_st: continue
