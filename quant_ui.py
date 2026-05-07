@@ -214,7 +214,11 @@ _FUZZY_MAP = {
     "serie a":           "Serie A",
     "bundesliga":        "Bundesliga",
     "champions league":  "UEFA Champions League",
-    "europa league":     "UEFA Europa League",
+    "europa league":              "UEFA Europa League",
+    "uel":                        "UEFA Europa League",
+    "conference league":          "UEFA Europa Conference League",
+    "uecl":                       "UEFA Europa Conference League",
+    "europa conference":          "UEFA Europa Conference League",
     "conference league": "UEFA Europa Conference League",
     "eredivisie":        "Eredivisie",
     "primeira liga":     "Primeira Liga",
@@ -233,7 +237,11 @@ _FUZZY_MAP = {
     "greek super":       "Greek Super League",
     "czech first":       "Czech First League",
     "ekstraklasa":       "Polish Ekstraklasa",
-    "saudi pro":         "Saudi Pro League",
+    "saudi pro":              "Saudi Pro League",
+    "saudi professional":     "Saudi Professional League",
+    "saudi league":           "Saudi Pro League",
+    "roshn":                  "Saudi Pro League",  # Roshn Saudi League (sponsored name)
+    "saudi roshn":            "Saudi Pro League",
     "j1 league":         "J1 League",
     "belgian pro":       "Belgian Pro League",
     "swiss super":       "Swiss Super League",
@@ -289,13 +297,19 @@ BLOCKED_LEAGUE_KEYWORDS = {
     "liga 2","liga 3","serie b","serie c","division b",
     "ligue 2","championship 2","primeira b","2. bundesliga",
     "national league","vanarama","non-league",
-    # ── Romania / Israel / other non-bookable European ───────────────────────
-    "romania","romanian","israel","israeli","bulgaria","bulgarian",
-    "croatia","croatian","slovenia","slovenian","hungary","hungarian",
-    "slovakia","slovakian","albania","albanian","latvia","lithuanian",
-    "estonia","estonian","moldova","moldovan","belarus","belarusian",
-    "ukraine","ukrainian","cyprus","cypriot","luxembourg","liechtenstein",
-    "faroe","iceland","andorra","malta","san marino","northern ireland",
+    # ── Non-bookable European domestic leagues ─────────────────────────────
+    # NOTE: We block the DOMESTIC leagues, NOT the countries themselves.
+    # Ukrainian/Croatian/etc. CLUBS play in UEFA competitions under correct names.
+    # Only block when the league itself is clearly a minor domestic competition.
+    "romanian liga","romanian football","liga i romania",
+    "israeli premier league","ligat haal",
+    "bulgarian first league","efbet liga",
+    "hungarian otp bank liga","nb i",
+    "latvian virsliga","estonian meistriliiga",
+    "moldovan national division","belarusian premier league",
+    "northern ireland premiership","faroe islands",
+    "icelandic league","andorra primera",
+    "maltese premier","san marino campionato",
 }
 
 # Additional exact team name blocks (clubs that slip through league filter)
@@ -872,12 +886,12 @@ def available_markets(league: str) -> set:
 LEAGUE_PRESTIGE = {
     # Tier 1 — global showpiece
     "UEFA Champions League":            1,
-    "Copa Libertadores":                2,    # South America's UCL
-    "Copa Sudamericana":                3,    # South America's UEL
-    "Recopa Sudamericana":              4,
     "UEFA Europa League":               2,
     "UEFA Europa Conference League":    3,
-    # Tier 2 — Big Five
+    "Copa Libertadores":                4,    # South America's UCL
+    "Copa Sudamericana":                5,    # South America's UEL
+    "Recopa Sudamericana":              6,
+            # Tier 2 — Big Five
     "Premier League":                   10,
     "La Liga":                          11,
     "Bundesliga":                       12,
@@ -1481,11 +1495,15 @@ def fetch_events(date_from,date_to):
                 raw_lg = m.get("league_name","")
                 canon  = canonical_league(raw_lg)
                 if canon != "__BLOCKED__" and canon in TOP_LEAGUES:
-                    # Also block by team name (catches clubs in mislabelled leagues)
-                    home_t = m.get("match_hometeam_name","")
-                    away_t = m.get("match_awayteam_name","")
-                    if is_team_blocked(home_t, away_t):
-                        continue
+                    # For continental competitions (UEFA/Copa) — never block by team name
+                    # A Flamengo or Shakhtar game is always valid in Copa/Europa
+                    _continental = any(kw in canon for kw in
+                        ("UEFA","Copa","CONMEBOL","Recopa","Europa","Champions","Conference"))
+                    if not _continental:
+                        home_t = m.get("match_hometeam_name","")
+                        away_t = m.get("match_awayteam_name","")
+                        if is_team_blocked(home_t, away_t):
+                            continue
                     m["league_name"] = canon   # normalise in-place
                     out.append(m)
             return out
@@ -1748,6 +1766,23 @@ with st.sidebar:
     kelly_divisor=st.slider("Kelly fraction (safety)",2,8,4)
     bankroll=st.number_input("Bankroll",min_value=10.0,value=1000.0,step=50.0)
     st.divider()
+    with st.expander("🔍 League Debug", expanded=False):
+        st.markdown("<div style='font-size:11px;color:#475569;'>Shows raw league names from API to diagnose filtering</div>",unsafe_allow_html=True)
+        if st.button("Run League Audit", use_container_width=True):
+            import requests as _rq
+            _url = f"https://apiv3.apifootball.com/?action=get_events&from={today_str}&to={today_str}&APIkey={API_KEY}"
+            try:
+                _raw = _rq.get(_url, timeout=10).json()
+                if isinstance(_raw, list):
+                    _leagues = sorted(set(m.get("league_name","") for m in _raw))
+                    _copa = [l for l in _leagues if any(k in l.lower() for k in ("libertadores","sudamericana","copa","conmebol"))]
+                    st.markdown("**Copa leagues found:**")
+                    for l in _copa: st.code(l)
+                    st.markdown(f"**Total leagues in API today:** {len(_leagues)}")
+                    with st.expander("All leagues"):
+                        for l in _leagues: st.text(l)
+            except Exception as e:
+                st.error(f"API error: {e}")
     if st.button("🧹 Refresh Cache",use_container_width=True):
         st.cache_data.clear(); st.rerun()
     live_refresh=st.toggle("🔴 Live Auto-Refresh (60s)",value=False)
@@ -1794,7 +1829,13 @@ weekly_matches   = [m for m in raw_weekly   if m.get("league_name") in ACTIVE_LE
 # ── CLICKABLE NAVIGATION STATS BAR ──────────────────────────────────────────
 # Clicking a card sets session_state["nav_view"] which controls Tab 3 display
 if "nav_view" not in st.session_state:
-    st.session_state["nav_view"] = "⏳ Today (Upcoming)"
+    # Smart default: if most today's games are finished, show Tomorrow
+    _today_remaining = len(daily_matches)
+    _today_done      = len(daily_finished)
+    if _today_remaining == 0 and _today_done > 0 and len(tomorrow_matches) > 0:
+        st.session_state["nav_view"] = "📅 Tomorrow"
+    else:
+        st.session_state["nav_view"] = "⏳ Today (Upcoming)"
 
 def nav_card(col, icon, label, count, view_key, active_color="#16a34a"):
     is_active = st.session_state["nav_view"] == view_key
