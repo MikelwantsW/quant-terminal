@@ -104,6 +104,8 @@ section[data-testid="stSidebar"] [data-testid="stAlert"] { background-color: #0d
 .gate-tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; font-family: 'DM Mono', monospace; margin: 2px; }
 .gate-pass { background: rgba(22,163,74,0.15); color: #4ade80; border: 1px solid rgba(22,163,74,0.3); }
 .gate-fail { background: rgba(239,68,68,0.12); color: #f87171; border: 1px solid rgba(239,68,68,0.2); }
+/* nav stat card select buttons — invisible overlay */
+button[kind="secondary"][data-testid*="nav_"] { opacity: 0 !important; height: 2px !important; min-height: 0 !important; padding: 0 !important; margin: -6px 0 0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -327,6 +329,13 @@ def canonical_league(name: str) -> str:
     for bkw in BLOCKED_LEAGUE_KEYWORDS:
         if bkw in low:
             return "__BLOCKED__"
+
+    # Hard-pass for Copa competitions (before country check)
+    # API returns many name variants — catch ALL of them here
+    if "libertadores" in low: return "Copa Libertadores"
+    if "sudamericana"  in low and "copa" in low: return "Copa Sudamericana"
+    if "sudamericana"  in low and "conmebol" in low: return "Copa Sudamericana"
+    if "recopa"        in low and ("sud" in low or "conmebol" in low): return "Recopa Sudamericana"
 
     # Must contain at least one allowed country/competition keyword
     has_allowed = any(akw in low for akw in ALLOWED_COUNTRY_KEYWORDS)
@@ -1782,13 +1791,38 @@ daily_finished   = [m for m in raw_daily    if m.get("league_name") in ACTIVE_LE
 tomorrow_matches = [m for m in raw_tomorrow if m.get("league_name") in ACTIVE_LEAGUES and is_upcoming(m)]
 weekly_matches   = [m for m in raw_weekly   if m.get("league_name") in ACTIVE_LEAGUES and is_upcoming(m)]
 
-# ── QUICK STATS ───────────────────────────────────────────────────────────────
-c1,c2,c3,c4,c5=st.columns(5)
-c1.metric("⏳ Today",       len(daily_matches))
-c2.metric("📅 Tomorrow",    len(tomorrow_matches))
-c3.metric("🔴 Live Now",    len(daily_live))
-c4.metric("✅ Finished",    len(daily_finished))
-c5.metric("📆 This Week",   len(weekly_matches))
+# ── CLICKABLE NAVIGATION STATS BAR ──────────────────────────────────────────
+# Clicking a card sets session_state["nav_view"] which controls Tab 3 display
+if "nav_view" not in st.session_state:
+    st.session_state["nav_view"] = "⏳ Today (Upcoming)"
+
+def nav_card(col, icon, label, count, view_key, active_color="#16a34a"):
+    is_active = st.session_state["nav_view"] == view_key
+    bg  = active_color if is_active else "#09111c"
+    bdr = active_color if is_active else "#1a2535"
+    cnt_color = "#ffffff" if is_active else "#4ade80"
+    with col:
+        st.markdown(
+            f"<div style='background:{bg};border:1px solid {bdr};border-radius:10px;"
+            f"padding:12px 8px;text-align:center;cursor:pointer;'>"
+            f"<div style='font-size:11px;color:{'#fff' if is_active else '#475569'};"
+            f"text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:4px;'>"
+            f"{icon} {label}</div>"
+            f"<div style='font-family:DM Mono,monospace;font-size:24px;"
+            f"font-weight:700;color:{cnt_color};'>{count}</div>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+        if st.button(f"Select", key=f"nav_{view_key}", use_container_width=True):
+            st.session_state["nav_view"] = view_key
+            st.rerun()
+
+_nc = st.columns(5)
+nav_card(_nc[0], "⏳", "Today",    len(daily_matches),   "⏳ Today (Upcoming)",  "#16a34a")
+nav_card(_nc[1], "📅", "Tomorrow",  len(tomorrow_matches), "📅 Tomorrow",          "#2563eb")
+nav_card(_nc[2], "🔴", "Live Now",  len(daily_live),       "🔴 Live Now",          "#dc2626")
+nav_card(_nc[3], "✅", "Finished",  len(daily_finished),   "✅ Finished",          "#475569")
+nav_card(_nc[4], "📆", "This Week", len(weekly_matches),   "📆 This Week",         "#9333ea")
 st.write("")
 
 # ── TABS ──────────────────────────────────────────────────────────────────────
@@ -1922,6 +1956,8 @@ with tab1:
 # ══ TAB 2 ═════════════════════════════════════════════════════════════════════
 with tab2:
     st.markdown("### 📝 Weekly Fixture Browser")
+    if st.session_state.get("nav_view") == "📆 This Week":
+        st.markdown("<div class='info-box'>📆 Showing <b>This Week</b> fixtures — navigated from stats bar</div>",unsafe_allow_html=True)
     st.markdown("<div class='info-box'>Only upcoming matches shown. Finished games removed automatically.</div>",unsafe_allow_html=True)
     c_search,c_tier_filter=st.columns([3,1])
     with c_search: search_q=st.text_input("🔍 Search team",placeholder="e.g. Chelsea, Brann, Santos…")
@@ -1942,7 +1978,12 @@ with tab2:
 # ══ TAB 3 ═════════════════════════════════════════════════════════════════════
 with tab3:
     st.markdown("### 🔥 Today's System Picks")
-    view_mode=st.radio("Show",["⏳ Today (Upcoming)","📅 Tomorrow","🔴 Live Now","✅ Finished"],horizontal=True,index=0)
+    # Pre-select based on nav card clicked from stats bar
+    _nav_default = st.session_state.get("nav_view","⏳ Today (Upcoming)")
+    _radio_opts  = ["⏳ Today (Upcoming)","📅 Tomorrow","🔴 Live Now","✅ Finished"]
+    _radio_idx   = _radio_opts.index(_nav_default) if _nav_default in _radio_opts else 0
+    view_mode=st.radio("Show", _radio_opts, horizontal=True, index=_radio_idx,
+                       key="daily_view_radio")
     if view_mode=="⏳ Today (Upcoming)":    show_matches=daily_matches
     elif view_mode=="📅 Tomorrow":          show_matches=tomorrow_matches
     elif view_mode=="🔴 Live Now":          show_matches=daily_live
@@ -2165,8 +2206,7 @@ with tab4:
                 for m in finished_yday:
                     lg_name = m.get("league_name","")
                     if lg_name not in acc_filter_leagues: continue
-                    _strict = st.session_state.get("_strict_acc", True)
-                    if _strict and book_tier(lg_name) not in ("A","B"): continue
+                    if st.session_state.get("_strict_acc",True) and book_tier(lg_name) not in ("A","B"): continue
                     h_st,_ = fetch_stats(m.get("match_hometeam_id"),"home")
                     a_st,_ = fetch_stats(m.get("match_awayteam_id"),"away")
                     if not h_st or not a_st: continue
