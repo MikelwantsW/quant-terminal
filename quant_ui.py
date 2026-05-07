@@ -139,7 +139,11 @@ SPORTSBOOK_TIER_B = {
     "Austrian Football Bundesliga","Austrian Bundesliga",
     "Allsvenskan","Eliteserien","Superliga","Major League Soccer",
     "Brasileirao Serie A","Argentine Primera División",
-    # API variants
+    # ── CONMEBOL Continental (South America) ─────────────────────────────────
+    "Copa Libertadores","CONMEBOL Libertadores","Copa CONMEBOL Libertadores",
+    "Copa Sudamericana","CONMEBOL Sudamericana","Copa CONMEBOL Sudamericana",
+    "Recopa Sudamericana",
+    # ── API variants ─────────────────────────────────────────────────────────
     "Dutch Eredivisie","Netherlands Eredivisie",
     "Portuguese Primeira Liga","Portugal Primeira Liga","Primeira Liga Portugal",
     "Turkish Süper Lig","Turkey Süper Lig","Super Lig",
@@ -192,6 +196,8 @@ ALLOWED_COUNTRY_KEYWORDS = {
     "poland","polish","ekstraklasa",
     "saudi",
     "japan","j1 league","j-league",
+    # CONMEBOL continental
+    "copa","libertadores","sudamericana","conmebol","recopa",
 }
 
 # Fuzzy map — only called AFTER country whitelist check passes
@@ -229,10 +235,18 @@ _FUZZY_MAP = {
     "j1 league":         "J1 League",
     "belgian pro":       "Belgian Pro League",
     "swiss super":       "Swiss Super League",
-    "austrian":          "Austrian Football Bundesliga",
+    "austrian":                "Austrian Football Bundesliga",
     # English Championship — must match EXACTLY, not "Romanian Championship"
-    "english championship": "Championship",
-    "england championship": "Championship",
+    "english championship":    "Championship",
+    "england championship":    "Championship",
+    # CONMEBOL continental competitions
+    "copa libertadores":       "Copa Libertadores",
+    "libertadores":            "Copa Libertadores",
+    "conmebol libertadores":   "Copa Libertadores",
+    "copa sudamericana":       "Copa Sudamericana",
+    "sudamericana":            "Copa Sudamericana",
+    "conmebol sudamericana":   "Copa Sudamericana",
+    "recopa sudamericana":     "Recopa Sudamericana",
 }
 
 # Explicit BLOCK list — leagues whose names partially match allowed keywords
@@ -662,7 +676,11 @@ LEAGUE_PROFILE = {
     "La Liga":(0.90,0.85,1.05,0.0),"Serie A":(0.88,0.92,1.10,0.0),
     "Bundesliga":(1.05,0.95,0.90,0.0),"Premier League":(1.00,1.00,1.00,0.0),
     "Ligue 1":(0.95,1.00,1.05,0.0),"UEFA Champions League":(1.00,1.00,1.00,0.0),
-    "UEFA Europa League":(1.00,1.00,1.00,0.0),"UEFA Europa Conference League":(1.00,1.00,1.00,0.0),
+"Copa Libertadores":(1.05,1.08,1.25,1.0),
+    "Copa Sudamericana":(1.02,1.05,1.20,1.0),
+    "CONMEBOL Libertadores":(1.05,1.08,1.25,1.0),
+    "CONMEBOL Sudamericana":(1.02,1.05,1.20,1.0),
+        "UEFA Europa League":(1.00,1.00,1.00,0.0),"UEFA Europa Conference League":(1.00,1.00,1.00,0.0),
     "Championship":(1.05,1.10,1.00,0.0),"Eredivisie":(1.10,1.00,0.90,0.0),
     "Primeira Liga":(0.90,1.05,1.10,1.0),"Süper Lig":(1.00,1.00,1.15,1.0),
     "Scottish Premiership":(1.05,1.10,1.00,1.0),"Scottish Premier League":(1.05,1.10,1.00,1.0),
@@ -697,9 +715,13 @@ HOME_AWAY_PROFILE = {
     "Serie A":                  (1.15, 0.85, 1.12, 1.28,  2),  # strong home fortress culture
     "Bundesliga":               (1.08, 0.93, 1.06, 1.12,  1),  # near-neutral
     "Ligue 1":                  (1.12, 0.88, 1.09, 1.20,  2),
-    "UEFA Champions League":    (1.08, 0.92, 1.07, 1.15,  1),  # away goals neutralise some
+    "UEFA Champions League":    (1.08, 0.92, 1.07, 1.15,  1),
     "UEFA Europa League":       (1.10, 0.90, 1.08, 1.18,  1),
     "UEFA Europa Conference League":(1.10, 0.90, 1.08, 1.18, 1),
+    "Copa Libertadores":        (1.18, 0.82, 1.12, 1.30,  3),
+    "Copa Sudamericana":        (1.15, 0.85, 1.10, 1.28,  2),
+    "CONMEBOL Libertadores":    (1.18, 0.82, 1.12, 1.30,  3),
+    "CONMEBOL Sudamericana":    (1.15, 0.85, 1.10, 1.28,  2),
     "Championship":             (1.12, 0.88, 1.10, 1.20,  2),
     "Eredivisie":               (1.06, 0.95, 1.05, 1.10,  1),  # fairly neutral
     "Primeira Liga":            (1.15, 0.85, 1.12, 1.25,  2),
@@ -749,6 +771,11 @@ MARKET_DEPTH = {
     "UEFA Champions League":            {"goals","corners","cards","sot"},
     "UEFA Europa League":               {"goals","corners","cards","sot"},
     "UEFA Europa Conference League":    {"goals","corners","cards","sot"},
+    "Copa Libertadores":                {"goals","corners","cards"},
+    "Copa Sudamericana":                {"goals","corners","cards"},
+    "CONMEBOL Libertadores":            {"goals","corners","cards"},
+    "CONMEBOL Sudamericana":            {"goals","corners","cards"},
+    "Recopa Sudamericana":              {"goals","corners"},
     "Championship":                     {"goals","corners","cards","sot"},
     # ── Tier B — goals + corners + cards, no SOT ──
     "Eredivisie":                       {"goals","corners","cards"},
@@ -787,7 +814,9 @@ DEFAULT_MARKETS = {"goals"}  # fallback for unknown leagues — goals only
 RED_CARD_RATE = {
     "La Liga":0.32,"Serie A":0.28,"Ligue 1":0.25,"Premier League":0.22,
     "Bundesliga":0.18,"UEFA Champions League":0.20,"UEFA Europa League":0.22,
-    "UEFA Europa Conference League":0.20,"Championship":0.28,"Süper Lig":0.35,
+    "UEFA Europa Conference League":0.20,
+    "Copa Libertadores":0.38,"Copa Sudamericana":0.35,
+    "CONMEBOL Libertadores":0.38,"CONMEBOL Sudamericana":0.35,"Championship":0.28,"Süper Lig":0.35,
     "Greek Super League":0.38,"Argentine Primera División":0.40,
     "Brasileirao Serie A":0.32,"Scottish Premiership":0.25,
     "Eredivisie":0.20,"Primeira Liga":0.28,
@@ -834,6 +863,9 @@ def available_markets(league: str) -> set:
 LEAGUE_PRESTIGE = {
     # Tier 1 — global showpiece
     "UEFA Champions League":            1,
+    "Copa Libertadores":                2,    # South America's UCL
+    "Copa Sudamericana":                3,    # South America's UEL
+    "Recopa Sudamericana":              4,
     "UEFA Europa League":               2,
     "UEFA Europa Conference League":    3,
     # Tier 2 — Big Five
@@ -1730,6 +1762,7 @@ STRICT_BOOKABLE = {
     "Swiss Super League","Austrian Football Bundesliga","Austrian Bundesliga",
     "Allsvenskan","Eliteserien","Superliga",
     "Major League Soccer","Brasileirao Serie A","Argentine Primera División",
+    "Copa Libertadores","Copa Sudamericana","CONMEBOL Libertadores","CONMEBOL Sudamericana",
 }
 
 # ── HEADER ────────────────────────────────────────────────────────────────────
