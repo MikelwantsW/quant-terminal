@@ -116,6 +116,30 @@ API_KEY       = (
     or st.secrets.get("APIFOOTBALL_KEY", "")
     or _DEFAULT_KEY
 )
+
+# ── BACKUP API: football-data.org ────────────────────────────────────────────
+# Genuinely free forever, no payment. Get token at football-data.org/client
+# Default trial token works for basic requests.
+_FD_TOKEN = (
+    st.session_state.get("fd_api_key")
+    or st.secrets.get("FOOTBALL_DATA_TOKEN", "")
+    or "test"  # trial token — limited but functional
+)
+
+# football-data.org competition IDs → our canonical league names
+FD_COMPETITION_MAP = {
+    "PL":  "Premier League",
+    "PD":  "La Liga",
+    "BL1": "Bundesliga",
+    "SA":  "Serie A",
+    "FL1": "Ligue 1",
+    "CL":  "UEFA Champions League",
+    "EL":  "UEFA Europa League",
+    "EC":  "UEFA Europa Conference League",
+    "ELC": "Championship",
+    "DED": "Eredivisie",
+    "PPL": "Primeira Liga",
+}
 now           = datetime.utcnow() + timedelta(hours=1)
 today_str     = now.strftime('%Y-%m-%d')
 tomorrow_str  = (now + timedelta(days=1)).strftime('%Y-%m-%d')
@@ -1491,6 +1515,52 @@ def fetch_lineups_for_match(match_id: str) -> set:
         return set()
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_events_backup(date_from: str, date_to: str) -> list:
+    """
+    Backup data source: football-data.org
+    Free forever, no payment required.
+    Covers the top 10 European competitions with goals/results data.
+    Returns matches in the same format as the primary API for compatibility.
+    """
+    matches = []
+    for comp_id, league_name in FD_COMPETITION_MAP.items():
+        try:
+            url = (f"https://api.football-data.org/v4/competitions/{comp_id}/matches"
+                   f"?dateFrom={date_from}&dateTo={date_to}")
+            headers = {"X-Auth-Token": _FD_TOKEN}
+            res = requests.get(url, headers=headers, timeout=8).json()
+            for m in res.get("matches", []):
+                status = m.get("status","")  # SCHEDULED, LIVE, IN_PLAY, PAUSED, FINISHED
+                ht = m.get("homeTeam",{}); at = m.get("awayTeam",{})
+                score = m.get("score",{}).get("fullTime",{})
+                kickoff = m.get("utcDate","")[:16].replace("T"," ")
+                match_date = m.get("utcDate","")[:10]
+                match_time = m.get("utcDate","")[11:16] if "T" in m.get("utcDate","") else ""
+                # Convert to apifootball.com format for compatibility
+                matches.append({
+                    "match_id":           str(m.get("id","")),
+                    "match_date":         match_date,
+                    "match_time":         match_time,
+                    "match_hometeam_name": ht.get("name",""),
+                    "match_awayteam_name": at.get("name",""),
+                    "match_hometeam_id":  str(ht.get("id","")),
+                    "match_awayteam_id":  str(at.get("id","")),
+                    "match_hometeam_score": str(score.get("home","")) if score.get("home") is not None else "",
+                    "match_awayteam_score": str(score.get("away","")) if score.get("away") is not None else "",
+                    "match_status":       "Finished" if status=="FINISHED" else
+                                         "1H" if status in ("IN_PLAY","LIVE") else
+                                         "HT" if status=="PAUSED" else "",
+                    "match_referee":      m.get("referees",[{}])[0].get("name","") if m.get("referees") else "",
+                    "league_name":        league_name,
+                    "statistics":         [],
+                    "goalscorer":         [],
+                    "cards":              [],
+                })
+        except Exception:
+            continue
+    return matches
+
 @st.cache_data(ttl=900,show_spinner=False)  # 15 min cache
 def fetch_events(date_from, date_to):
     # Always use current key (may have been updated in sidebar)
@@ -1508,18 +1578,24 @@ def fetch_events(date_from, date_to):
         if isinstance(res, dict):
             err = res.get("error", "") or res.get("message", "") or str(res)
             st.session_state["api_error"] = f"API returned error: {err}"
-            return []
+            backup = fetch_events_backup(date_from, date_to)
+            if backup:
+                st.session_state["api_error"] = (
+                    f"⚠️ Primary API error ({err[:60]}) — showing backup data (football-data.org). "
+                    f"Fix: activate your plan at apifootball.com/admin"
+                )
+            return backup
 
         if not isinstance(res, list):
             st.session_state["api_error"] = f"Unexpected API response type: {type(res)}"
-            return []
+            return fetch_events_backup(date_from, date_to)
 
         if len(res) == 0:
             st.session_state["api_error"] = (
                 f"API returned 0 matches for {date_from}→{date_to}. "
-                "Possible causes: API rate limit exceeded, no matches scheduled, or API key issue."
+                "Possible causes: API rate limit exceeded, no matches scheduled, or key issue."
             )
-            return []
+            return fetch_events_backup(date_from, date_to)
 
         # Clear any previous error
         st.session_state.pop("api_error", None)
@@ -1540,7 +1616,6 @@ def fetch_events(date_from, date_to):
                 out.append(m)
 
         if len(out) == 0 and len(res) > 0:
-            # API returned matches but ALL were filtered — useful diagnostic
             raw_leagues = sorted(set(m.get("league_name","") for m in res))
             st.session_state["api_filter_warn"] = (
                 f"API returned {len(res)} matches but all were filtered. "
@@ -1550,6 +1625,19 @@ def fetch_events(date_from, date_to):
             st.session_state.pop("api_filter_warn", None)
 
         return out
+
+    except requests.exceptions.Timeout:
+        st.session_state["api_error"] = "API request timed out. Using backup API..."
+        backup = fetch_events_backup(date_from, date_to)
+        if backup:
+            st.session_state["api_error"] = "⚠️ Using backup API (football-data.org) — primary API timed out"
+        return backup
+    except Exception as e:
+        st.session_state["api_error"] = f"API fetch error: {str(e)}"
+        backup = fetch_events_backup(date_from, date_to)
+        if backup:
+            st.session_state["api_error"] = "⚠️ Using backup API (football-data.org) — primary API unavailable"
+        return backup
 
     except requests.exceptions.Timeout:
         st.session_state["api_error"] = "API request timed out. Check your internet connection."
@@ -1803,8 +1891,18 @@ with st.sidebar:
             st.rerun()
         if "404" in st.session_state.get("api_error",""):
             st.markdown("<div style='font-size:11px;color:#f87171;margin-top:6px;'>"
-                        "🔴 404 = key invalid/expired. Get new key above.</div>",
+                        "🔴 404 = key invalid or plan not active.<br>"
+                        "→ Go to apifootball.com/admin → Change Plan → Free $0</div>",
                         unsafe_allow_html=True)
+        st.markdown("---")
+        st.markdown("<div style='font-size:11px;color:#64748b;'>🔄 <b>Backup API</b> (football-data.org)<br>"
+                    "Free forever — no payment ever needed</div>",unsafe_allow_html=True)
+        _fd_key = st.text_input("football-data.org token (optional)", type="password",
+                                 value=st.session_state.get("fd_api_key",""),
+                                 placeholder="Get free token at football-data.org/client")
+        if _fd_key and _fd_key != st.session_state.get("fd_api_key",""):
+            st.session_state["fd_api_key"] = _fd_key
+            st.cache_data.clear(); st.rerun()
     st.divider()
     sniper_mode=st.toggle("🎯 Sniper Mode (82%+)",value=False)
     if sniper_mode:
