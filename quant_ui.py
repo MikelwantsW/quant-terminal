@@ -110,21 +110,22 @@ button[kind="secondary"][data-testid*="nav_"] { opacity: 0 !important; height: 2
 """, unsafe_allow_html=True)
 
 # ── CONFIG ───────────────────────────────────────────────────────────────────
-_DEFAULT_KEY  = "4ca129dfac12e50067e9a115f4d50328619188357f590208bcbacba23789307a"
-API_KEY       = (
+# ── API KEYS — loaded from secrets or sidebar, NEVER hardcoded ──────────────
+# To set up: create .streamlit/secrets.toml with:
+#   APIFOOTBALL_KEY = "your_key_here"
+#   FOOTBALL_DATA_TOKEN = "your_token_here"
+# On Streamlit Cloud: Settings → Secrets → paste the same content
+API_KEY = (
     st.session_state.get("user_api_key")
     or st.secrets.get("APIFOOTBALL_KEY", "")
-    or _DEFAULT_KEY
-)
+)  # No hardcoded fallback — must be set in secrets or sidebar
 
-# ── BACKUP API: football-data.org ────────────────────────────────────────────
-# Genuinely free forever, no payment. Get token at football-data.org/client
-# Default trial token works for basic requests.
+# ── BACKUP API: football-data.org (free, no payment ever) ───────────────────
+# Register at football-data.org/client to get a free token
 _FD_TOKEN = (
     st.session_state.get("fd_api_key")
     or st.secrets.get("FOOTBALL_DATA_TOKEN", "")
-    or "test"  # trial token — limited but functional
-)
+)  # No hardcoded fallback
 
 # football-data.org competition IDs → our canonical league names
 FD_COMPETITION_MAP = {
@@ -1463,7 +1464,7 @@ def compute_weather_impact(weather: dict) -> dict:
 
 @st.cache_data(ttl=1800,show_spinner=False)  # 30 min cache
 def fetch_stats(team_id,venue):
-    _ak=st.session_state.get("user_api_key") or st.secrets.get("APIFOOTBALL_KEY","") or _DEFAULT_KEY
+    _ak=st.session_state.get("user_api_key") or st.secrets.get("APIFOOTBALL_KEY","")
     url=f"https://apiv3.apifootball.com/?action=get_events&team_id={team_id}&from={past_str}&to={today_str}&APIkey={_ak}"
     try:
         res=requests.get(url,timeout=10).json()
@@ -1495,7 +1496,7 @@ def fetch_lineups_for_match(match_id: str) -> set:
     Returns a set of player name strings (empty set if not yet available).
     Cached 5 minutes — lineups change close to kickoff.
     """
-    _ak2=st.session_state.get("user_api_key") or st.secrets.get("APIFOOTBALL_KEY","") or _DEFAULT_KEY
+    _ak2=st.session_state.get("user_api_key") or st.secrets.get("APIFOOTBALL_KEY","")
     url = f"https://apiv3.apifootball.com/?action=get_lineups&match_id={match_id}&APIkey={_ak2}"
     try:
         res = requests.get(url, timeout=8).json()
@@ -1518,11 +1519,19 @@ def fetch_lineups_for_match(match_id: str) -> set:
 @st.cache_data(ttl=900, show_spinner=False)
 def fetch_events_backup(date_from: str, date_to: str) -> list:
     """
-    Backup data source: football-data.org
-    Free forever, no payment required.
-    Covers the top 10 European competitions with goals/results data.
-    Returns matches in the same format as the primary API for compatibility.
+    Backup data source: football-data.org — Free forever, no payment.
+    Covers PL, La Liga, Bundesliga, Serie A, Ligue 1, CL, EL, UECL, Championship.
+    Returns matches in apifootball.com format for compatibility.
     """
+    _fd = (
+        st.session_state.get("fd_api_key")
+        or st.secrets.get("FOOTBALL_DATA_TOKEN", "")
+    )
+    if not _fd:
+        # No token — flag it but don't block
+        st.session_state["fd_no_token"] = True
+        return []
+    st.session_state.pop("fd_no_token", None)
     matches = []
     for comp_id, league_name in FD_COMPETITION_MAP.items():
         try:
@@ -1563,12 +1572,13 @@ def fetch_events_backup(date_from: str, date_to: str) -> list:
 
 @st.cache_data(ttl=900,show_spinner=False)  # 15 min cache
 def fetch_events(date_from, date_to):
-    # Always use current key (may have been updated in sidebar)
     _active_key = (
         st.session_state.get("user_api_key")
         or st.secrets.get("APIFOOTBALL_KEY", "")
-        or _DEFAULT_KEY
     )
+    if not _active_key:
+        st.session_state["api_error"] = "NO_KEY: Open 🔑 API Key in sidebar and paste your apifootball.com key."
+        return fetch_events_backup(date_from, date_to)
     url = f"https://apiv3.apifootball.com/?action=get_events&from={date_from}&to={date_to}&APIkey={_active_key}"
     try:
         resp = requests.get(url, timeout=15)
@@ -1877,13 +1887,19 @@ with st.sidebar:
     # ── API Key (shows expanded when error) ──────────────────────
     _has_err = bool(st.session_state.get("api_error",""))
     with st.expander("🔑 API Key" + (" ⚠️" if _has_err else ""), expanded=_has_err):
-        st.markdown("<div style='font-size:11px;color:#64748b;'>"  
-                    "Free key at <a href='https://apifootball.com' target='_blank' "
-                    "style='color:#60a5fa;'>apifootball.com</a> · 100 req/day</div>",
-                    unsafe_allow_html=True)
-        _new_key = st.text_input("API Key", type="password",
+        st.markdown(
+            "<div style='font-size:12px;color:#64748b;margin-bottom:10px;'>"
+            "🔐 <b>Your keys are never stored in code.</b><br>"
+            "They live only in your Streamlit secrets file or this session.<br><br>"
+            "📋 <b>To set up permanently:</b><br>"
+            "Create <code>.streamlit/secrets.toml</code>:<br>"
+            "<code style='background:#1e293b;padding:4px 8px;border-radius:4px;display:block;margin-top:4px;'>"
+            "APIFOOTBALL_KEY = \"your_key\"</code></div>",
+            unsafe_allow_html=True
+        )
+        _new_key = st.text_input("🔑 apifootball.com key", type="password",
                                   value=st.session_state.get("user_api_key",""),
-                                  placeholder="Paste your key here")
+                                  placeholder="Paste from apifootball.com/admin")
         if _new_key and _new_key != st.session_state.get("user_api_key",""):
             st.session_state["user_api_key"] = _new_key
             st.cache_data.clear()
@@ -2044,6 +2060,17 @@ st.write("")
 # ── API STATUS BANNER ────────────────────────────────────────────────────────
 _api_err  = st.session_state.get("api_error", "")
 _api_warn = st.session_state.get("api_filter_warn", "")
+if st.session_state.get("fd_no_token") and not st.session_state.get("api_error",""):
+    st.markdown(
+        "<div style='background:#0a1a2d;border:1px solid #2563eb;border-radius:10px;"
+            "padding:12px 16px;margin-bottom:14px;'>"
+        "<div style='font-size:12px;color:#60a5fa;'>"
+        "📋 <b>Get data for free:</b> Register at "
+            "<a href='https://football-data.org/client' target='_blank' style='color:#93c5fd;'>"
+            "football-data.org/client</a> (30 sec, no payment) → paste token in "
+        "🔑 API Key sidebar → immediate data</div></div>",
+        unsafe_allow_html=True
+    )
 if _api_err:
     st.markdown(
         f"<div style='background:#2d0a0a;border:1px solid #ef4444;border-radius:10px;"
