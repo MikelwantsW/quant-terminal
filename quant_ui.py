@@ -110,7 +110,12 @@ button[kind="secondary"][data-testid*="nav_"] { opacity: 0 !important; height: 2
 """, unsafe_allow_html=True)
 
 # ── CONFIG ───────────────────────────────────────────────────────────────────
-API_KEY       = st.secrets.get("APIFOOTBALL_KEY", "4ca129dfac12e50067e9a115f4d50328619188357f590208bcbacba23789307a")
+_DEFAULT_KEY  = "4ca129dfac12e50067e9a115f4d50328619188357f590208bcbacba23789307a"
+API_KEY       = (
+    st.session_state.get("user_api_key")
+    or st.secrets.get("APIFOOTBALL_KEY", "")
+    or _DEFAULT_KEY
+)
 now           = datetime.utcnow() + timedelta(hours=1)
 today_str     = now.strftime('%Y-%m-%d')
 tomorrow_str  = (now + timedelta(days=1)).strftime('%Y-%m-%d')
@@ -1434,7 +1439,8 @@ def compute_weather_impact(weather: dict) -> dict:
 
 @st.cache_data(ttl=1800,show_spinner=False)  # 30 min cache
 def fetch_stats(team_id,venue):
-    url=f"https://apiv3.apifootball.com/?action=get_events&team_id={team_id}&from={past_str}&to={today_str}&APIkey={API_KEY}"
+    _ak=st.session_state.get("user_api_key") or st.secrets.get("APIFOOTBALL_KEY","") or _DEFAULT_KEY
+    url=f"https://apiv3.apifootball.com/?action=get_events&team_id={team_id}&from={past_str}&to={today_str}&APIkey={_ak}"
     try:
         res=requests.get(url,timeout=10).json()
         s={"gf":0,"ga":0,"cf":0,"ca":0,"sotf":0,"sota":0,"shotsf":0,"shotsa":0,"cards":0,"cnt":0}
@@ -1465,7 +1471,8 @@ def fetch_lineups_for_match(match_id: str) -> set:
     Returns a set of player name strings (empty set if not yet available).
     Cached 5 minutes — lineups change close to kickoff.
     """
-    url = f"https://apiv3.apifootball.com/?action=get_lineups&match_id={match_id}&APIkey={API_KEY}"
+    _ak2=st.session_state.get("user_api_key") or st.secrets.get("APIFOOTBALL_KEY","") or _DEFAULT_KEY
+    url = f"https://apiv3.apifootball.com/?action=get_lineups&match_id={match_id}&APIkey={_ak2}"
     try:
         res = requests.get(url, timeout=8).json()
         names = set()
@@ -1486,7 +1493,13 @@ def fetch_lineups_for_match(match_id: str) -> set:
 
 @st.cache_data(ttl=900,show_spinner=False)  # 15 min cache
 def fetch_events(date_from, date_to):
-    url = f"https://apiv3.apifootball.com/?action=get_events&from={date_from}&to={date_to}&APIkey={API_KEY}"
+    # Always use current key (may have been updated in sidebar)
+    _active_key = (
+        st.session_state.get("user_api_key")
+        or st.secrets.get("APIFOOTBALL_KEY", "")
+        or _DEFAULT_KEY
+    )
+    url = f"https://apiv3.apifootball.com/?action=get_events&from={date_from}&to={date_to}&APIkey={_active_key}"
     try:
         resp = requests.get(url, timeout=15)
         res  = resp.json()
@@ -1773,6 +1786,26 @@ with st.sidebar:
     st.markdown("### ⚡ Terminal")
     st.markdown(f"<div style='font-family:DM Mono,monospace;font-size:11px;color:#475569;'>DATE · {today_str} · {now.strftime('%H:%M')} UTC+1</div>",unsafe_allow_html=True)
     st.divider()
+    # ── API Key (shows expanded when error) ──────────────────────
+    _has_err = bool(st.session_state.get("api_error",""))
+    with st.expander("🔑 API Key" + (" ⚠️" if _has_err else ""), expanded=_has_err):
+        st.markdown("<div style='font-size:11px;color:#64748b;'>"  
+                    "Free key at <a href='https://apifootball.com' target='_blank' "
+                    "style='color:#60a5fa;'>apifootball.com</a> · 100 req/day</div>",
+                    unsafe_allow_html=True)
+        _new_key = st.text_input("API Key", type="password",
+                                  value=st.session_state.get("user_api_key",""),
+                                  placeholder="Paste your key here")
+        if _new_key and _new_key != st.session_state.get("user_api_key",""):
+            st.session_state["user_api_key"] = _new_key
+            st.cache_data.clear()
+            st.session_state.pop("api_error", None)
+            st.rerun()
+        if "404" in st.session_state.get("api_error",""):
+            st.markdown("<div style='font-size:11px;color:#f87171;margin-top:6px;'>"
+                        "🔴 404 = key invalid/expired. Get new key above.</div>",
+                        unsafe_allow_html=True)
+    st.divider()
     sniper_mode=st.toggle("🎯 Sniper Mode (82%+)",value=False)
     if sniper_mode:
         st.markdown("<div style='background:#1a0a00;border:1px solid #f97316;border-radius:8px;padding:10px;font-size:12px;color:#fb923c;'>⚡ Ultra-high-confidence only.</div>",unsafe_allow_html=True)
@@ -1921,10 +1954,8 @@ if _api_err:
         f"letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;'>⚠️ API Issue</div>"
         f"<div style='font-size:13px;color:#fca5a5;'>{_api_err}</div>"
         f"<div style='margin-top:10px;font-size:12px;color:#7f1d1d;'>"
-        f"<b>What to do:</b> 1) Wait 1 hour and refresh — free API keys reset hourly/daily. "
-        f"2) Check apifootball.com for your key quota. "
-        f"3) Try a different API key in the app code.</div>"
-        f"</div>",
+        f"{"<b>404 = Key invalid/expired.</b> Open 🔑 API Key in sidebar → paste new key from apifootball.com" if "404" in _api_err else "<b>What to do:</b> 1) Wait and refresh — free API resets hourly. 2) Check apifootball.com quota. 3) Enter a new key in 🔑 API Key sidebar section."}"
+        f"</div></div>",
         unsafe_allow_html=True
     )
 elif _api_warn:
