@@ -1516,6 +1516,61 @@ def fetch_lineups_for_match(match_id: str) -> set:
         return set()
 
 
+# ── LEAGUE TEAM VALIDATOR ────────────────────────────────────────────────────
+# Many countries name their league "Premier League", "Championship" etc.
+# This validates the teams actually match the expected league/country.
+
+# Teams confirmed in each top league (lowercase substrings — partial match is fine)
+_LEAGUE_TEAM_ANCHORS = {
+    "Premier League": {
+        "manchester","liverpool","chelsea","arsenal","tottenham","newcastle",
+        "aston villa","west ham","brighton","fulham","brentford","crystal palace",
+        "everton","wolves","wolverhampton","nottingham","leicester","southampton",
+        "ipswich","bournemouth","luton","burnley","sheffield","watford","norwich",
+        "sunderland","stoke","swansea","cardiff","middlesbrough","coventry","hull",
+        "leeds","plymouth","millwall","queens park","qpr","charlton","blackburn",
+        "bolton","derby","birmingham","reading","bristol","swansea","portsmouth",
+    },
+    "Championship": {
+        "leeds","sheffield","middlesbrough","sunderland","coventry","hull",
+        "norwich","plymouth","millwall","cardiff","birmingham","reading",
+        "bristol","blackburn","derby","watford","luton","burnley","stoke",
+        "swansea","portsmouth","oxford","queens park","qpr","charlton",
+        "west brom","preston","blackpool","wigan","bolton","barnsley",
+    },
+    "Eredivisie": {
+        "ajax","psv","feyenoord","utrecht","alkmaar","vitesse","heerenveen",
+        "groningen","twente","willem","sparta","fortuna","heracles","cambuur",
+        "emmen","waalwijk","excelsior","nec","zwolle",
+    },
+    "Süper Lig": {
+        "galatasaray","fenerbahce","besiktas","trabzonspor","basaksehir",
+        "sivasspor","konyaspor","gaziantep","antalyaspor","kayserispor",
+        "rizespor","alanyaspor","kasimpasa","hatayspor","ankaragücü",
+    },
+    "Scottish Premiership": {
+        "celtic","rangers","hearts","hibernian","aberdeen","dundee",
+        "motherwell","livingston","kilmarnock","ross county","st mirren",
+        "st johnstone","hamilton","partick",
+    },
+    "Superliga": {
+        "copenhagen","brondby","midtjylland","aab","odense","silkeborg",
+        "randers","viborg","vejle","nordsjaelland","sonderjyske",
+    },
+}
+
+def _validate_league_teams(canon: str, home: str, away: str) -> bool:
+    """
+    Returns True if either team matches the expected league nationality.
+    If no anchors defined for this league, allow it through (True).
+    """
+    anchors = _LEAGUE_TEAM_ANCHORS.get(canon)
+    if not anchors:
+        return True  # No validation needed — trust the league name
+    combined = (home + " " + away).lower()
+    return any(anchor in combined for anchor in anchors)
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def fetch_events_backup(date_from: str, date_to: str) -> list:
     """
@@ -1579,6 +1634,7 @@ def fetch_events(date_from, date_to):
     if not _active_key:
         st.session_state["api_error"] = "NO_KEY: Open 🔑 API Key in sidebar and paste your apifootball.com key."
         return fetch_events_backup(date_from, date_to)
+    # Try primary URL — if 404, try alternative endpoint
     url = f"https://apiv3.apifootball.com/?action=get_events&from={date_from}&to={date_to}&APIkey={_active_key}"
     try:
         resp = requests.get(url, timeout=15)
@@ -1587,14 +1643,27 @@ def fetch_events(date_from, date_to):
         # ── Detect API errors before processing ──────────────────────────
         if isinstance(res, dict):
             err = res.get("error", "") or res.get("message", "") or str(res)
-            st.session_state["api_error"] = f"API returned error: {err}"
-            backup = fetch_events_backup(date_from, date_to)
-            if backup:
-                st.session_state["api_error"] = (
-                    f"⚠️ Primary API error ({err[:60]}) — showing backup data (football-data.org). "
-                    f"Fix: activate your plan at apifootball.com/admin"
-                )
-            return backup
+            # Try alternative endpoint before giving up
+            if "404" in str(resp.status_code) or "404" in str(err):
+                try:
+                    alt_url = f"https://apiv2.apifootball.com/?action=get_events&from={date_from}&to={date_to}&APIkey={_active_key}"
+                    alt_res  = requests.get(alt_url, timeout=10).json()
+                    if isinstance(alt_res, list) and len(alt_res) > 0:
+                        st.session_state.pop("api_error", None)
+                        res = alt_res  # Use alt response — continue processing below
+                    else:
+                        raise ValueError("alt also empty")
+                except Exception:
+                    pass  # Fall through to backup
+            if isinstance(res, dict):  # Still an error dict after alt attempt
+                st.session_state["api_error"] = f"API returned error: {err}"
+                backup = fetch_events_backup(date_from, date_to)
+                if backup:
+                    st.session_state["api_error"] = (
+                        f"⚠️ Primary API error — showing backup data. "
+                        f"Fix: check your key at apifootball.com/admin"
+                    )
+                return backup
 
         if not isinstance(res, list):
             st.session_state["api_error"] = f"Unexpected API response type: {type(res)}"
@@ -1615,13 +1684,16 @@ def fetch_events(date_from, date_to):
             raw_lg = m.get("league_name", "")
             canon  = canonical_league(raw_lg)
             if canon != "__BLOCKED__" and canon in TOP_LEAGUES:
+                home_t = m.get("match_hometeam_name","")
+                away_t = m.get("match_awayteam_name","")
                 _continental = any(kw in canon for kw in
                     ("UEFA","Copa","CONMEBOL","Recopa","Europa","Champions","Conference"))
-                if not _continental:
-                    home_t = m.get("match_hometeam_name","")
-                    away_t = m.get("match_awayteam_name","")
-                    if is_team_blocked(home_t, away_t):
-                        continue
+                # Block by team name (non-continental only)
+                if not _continental and is_team_blocked(home_t, away_t):
+                    continue
+                # Validate league identity — blocks Ghana/Nigeria using "Premier League" etc.
+                if not _continental and not _validate_league_teams(canon, home_t, away_t):
+                    continue
                 m["league_name"] = canon
                 out.append(m)
 
@@ -1899,12 +1971,27 @@ with st.sidebar:
         )
         _new_key = st.text_input("🔑 apifootball.com key", type="password",
                                   value=st.session_state.get("user_api_key",""),
-                                  placeholder="Paste from apifootball.com/admin")
+                                  placeholder="Paste from apifootball.com/admin",
+                                  help="Go to apifootball.com/admin → copy the key shown there → paste here")
         if _new_key and _new_key != st.session_state.get("user_api_key",""):
             st.session_state["user_api_key"] = _new_key
             st.cache_data.clear()
             st.session_state.pop("api_error", None)
+            st.success("✅ Key saved! Loading data...")
             st.rerun()
+        # Test key button
+        if st.session_state.get("user_api_key") and st.button("🧪 Test Key", use_container_width=True):
+            import requests as _rqt
+            _tk = st.session_state.get("user_api_key","")
+            try:
+                _tr = _rqt.get(f"https://apiv3.apifootball.com/?action=get_events&from=2026-05-10&to=2026-05-10&APIkey={_tk}", timeout=8)
+                _tj = _tr.json()
+                if isinstance(_tj, list):
+                    st.success(f"✅ Key works! API returned {len(_tj)} matches")
+                elif isinstance(_tj, dict):
+                    st.error(f"❌ Key error: {_tj.get('error',_tj)}")
+            except Exception as _e:
+                st.error(f"❌ Connection error: {_e}")
         if "404" in st.session_state.get("api_error",""):
             st.markdown("<div style='font-size:11px;color:#f87171;margin-top:6px;'>"
                         "🔴 404 = key invalid or plan not active.<br>"
