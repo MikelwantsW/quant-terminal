@@ -391,7 +391,7 @@ def canonical_league(name: str) -> str:
 #       card_risk      > 0.60  → averages >0.6 cards/game (disciplinary risk)
 # ─────────────────────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=7200, show_spinner=False)  # 2hr cache
 def fetch_player_stats(team_id: str, past_from: str, past_to: str) -> dict:
     """
     Fetch last 8 finished matches for a team and compute per-player contribution
@@ -1432,7 +1432,7 @@ def compute_weather_impact(weather: dict) -> dict:
         "temp": temp, "rain": rain, "wind": wind,
     }
 
-@st.cache_data(ttl=600,show_spinner=False)
+@st.cache_data(ttl=1800,show_spinner=False)  # 30 min cache
 def fetch_stats(team_id,venue):
     url=f"https://apiv3.apifootball.com/?action=get_events&team_id={team_id}&from={past_str}&to={today_str}&APIkey={API_KEY}"
     try:
@@ -1484,31 +1484,66 @@ def fetch_lineups_for_match(match_id: str) -> set:
         return set()
 
 
-@st.cache_data(ttl=300,show_spinner=False)
-def fetch_events(date_from,date_to):
-    url=f"https://apiv3.apifootball.com/?action=get_events&from={date_from}&to={date_to}&APIkey={API_KEY}"
+@st.cache_data(ttl=900,show_spinner=False)  # 15 min cache
+def fetch_events(date_from, date_to):
+    url = f"https://apiv3.apifootball.com/?action=get_events&from={date_from}&to={date_to}&APIkey={API_KEY}"
     try:
-        res=requests.get(url,timeout=15).json()
-        if isinstance(res,list):
-            out = []
-            for m in res:
-                raw_lg = m.get("league_name","")
-                canon  = canonical_league(raw_lg)
-                if canon != "__BLOCKED__" and canon in TOP_LEAGUES:
-                    # For continental competitions (UEFA/Copa) — never block by team name
-                    # A Flamengo or Shakhtar game is always valid in Copa/Europa
-                    _continental = any(kw in canon for kw in
-                        ("UEFA","Copa","CONMEBOL","Recopa","Europa","Champions","Conference"))
-                    if not _continental:
-                        home_t = m.get("match_hometeam_name","")
-                        away_t = m.get("match_awayteam_name","")
-                        if is_team_blocked(home_t, away_t):
-                            continue
-                    m["league_name"] = canon   # normalise in-place
-                    out.append(m)
-            return out
+        resp = requests.get(url, timeout=15)
+        res  = resp.json()
+
+        # ── Detect API errors before processing ──────────────────────────
+        if isinstance(res, dict):
+            err = res.get("error", "") or res.get("message", "") or str(res)
+            st.session_state["api_error"] = f"API returned error: {err}"
+            return []
+
+        if not isinstance(res, list):
+            st.session_state["api_error"] = f"Unexpected API response type: {type(res)}"
+            return []
+
+        if len(res) == 0:
+            st.session_state["api_error"] = (
+                f"API returned 0 matches for {date_from}→{date_to}. "
+                "Possible causes: API rate limit exceeded, no matches scheduled, or API key issue."
+            )
+            return []
+
+        # Clear any previous error
+        st.session_state.pop("api_error", None)
+
+        out = []
+        for m in res:
+            raw_lg = m.get("league_name", "")
+            canon  = canonical_league(raw_lg)
+            if canon != "__BLOCKED__" and canon in TOP_LEAGUES:
+                _continental = any(kw in canon for kw in
+                    ("UEFA","Copa","CONMEBOL","Recopa","Europa","Champions","Conference"))
+                if not _continental:
+                    home_t = m.get("match_hometeam_name","")
+                    away_t = m.get("match_awayteam_name","")
+                    if is_team_blocked(home_t, away_t):
+                        continue
+                m["league_name"] = canon
+                out.append(m)
+
+        if len(out) == 0 and len(res) > 0:
+            # API returned matches but ALL were filtered — useful diagnostic
+            raw_leagues = sorted(set(m.get("league_name","") for m in res))
+            st.session_state["api_filter_warn"] = (
+                f"API returned {len(res)} matches but all were filtered. "
+                f"Raw leagues: {', '.join(raw_leagues[:10])}"
+            )
+        else:
+            st.session_state.pop("api_filter_warn", None)
+
+        return out
+
+    except requests.exceptions.Timeout:
+        st.session_state["api_error"] = "API request timed out. Check your internet connection."
         return []
-    except: return []
+    except Exception as e:
+        st.session_state["api_error"] = f"API fetch error: {str(e)}"
+        return []
 
 # ── EDGE ENGINE ───────────────────────────────────────────────────────────────
 def generate_ai_pick(h_st,a_st,league,sniper_mode=False,h_cnt=5,a_cnt=5,**kwargs):
@@ -1766,6 +1801,15 @@ with st.sidebar:
     kelly_divisor=st.slider("Kelly fraction (safety)",2,8,4)
     bankroll=st.number_input("Bankroll",min_value=10.0,value=1000.0,step=50.0)
     st.divider()
+    # API quota warning
+    _api_e = st.session_state.get("api_error","")
+    if _api_e:
+        st.markdown(f"<div style='background:#2d0a0a;border:1px solid #ef4444;"
+                    f"border-radius:6px;padding:8px;font-size:11px;color:#fca5a5;"
+                    f"margin-bottom:8px;'>⚠️ API issue detected</div>",unsafe_allow_html=True)
+    st.markdown("<div style='font-size:11px;color:#334d66;'>"
+        "💡 Free API key: ~100 calls/day. "
+        "If seeing 0 matches, key may be rate-limited.</div>",unsafe_allow_html=True)
     with st.expander("🔍 League Debug", expanded=False):
         st.markdown("<div style='font-size:11px;color:#475569;'>Shows raw league names from API to diagnose filtering</div>",unsafe_allow_html=True)
         if st.button("Run League Audit", use_container_width=True):
@@ -1865,6 +1909,34 @@ nav_card(_nc[2], "🔴", "Live Now",  len(daily_live),       "🔴 Live Now",   
 nav_card(_nc[3], "✅", "Finished",  len(daily_finished),   "✅ Finished",          "#475569")
 nav_card(_nc[4], "📆", "This Week", len(weekly_matches),   "📆 This Week",         "#9333ea")
 st.write("")
+
+# ── API STATUS BANNER ────────────────────────────────────────────────────────
+_api_err  = st.session_state.get("api_error", "")
+_api_warn = st.session_state.get("api_filter_warn", "")
+if _api_err:
+    st.markdown(
+        f"<div style='background:#2d0a0a;border:1px solid #ef4444;border-radius:10px;"
+        f"padding:14px 18px;margin-bottom:16px;'>"  
+        f"<div style='font-family:DM Mono,monospace;font-size:11px;color:#ef4444;"
+        f"letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;'>⚠️ API Issue</div>"
+        f"<div style='font-size:13px;color:#fca5a5;'>{_api_err}</div>"
+        f"<div style='margin-top:10px;font-size:12px;color:#7f1d1d;'>"
+        f"<b>What to do:</b> 1) Wait 1 hour and refresh — free API keys reset hourly/daily. "
+        f"2) Check apifootball.com for your key quota. "
+        f"3) Try a different API key in the app code.</div>"
+        f"</div>",
+        unsafe_allow_html=True
+    )
+elif _api_warn:
+    st.markdown(
+        f"<div style='background:#1a1000;border:1px solid #f97316;border-radius:10px;"
+        f"padding:12px 16px;margin-bottom:14px;'>"  
+        f"<div style='font-size:12px;color:#fb923c;'>{_api_warn}</div>"
+        f"<div style='font-size:11px;color:#78350f;margin-top:6px;'>"
+        f"Open <b>🔍 League Debug</b> in the sidebar to see raw API league names.</div>"
+        f"</div>",
+        unsafe_allow_html=True
+    )
 
 # ── TABS ──────────────────────────────────────────────────────────────────────
 # ═════════════════════════════════════════════════════════════════════════════
